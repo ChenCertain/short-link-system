@@ -9,9 +9,11 @@
     "build:worker": "cd worker && npm run build",
     "build:frontend": "cd frontend && npm run build",
     "build": "npm run build:frontend && npm run build:worker",
+    "build:config": "node scripts/gen-wrangler.mjs",
     "db:migrate": "cd worker && npx wrangler d1 migrations apply short-link-db --local",
     "db:migrate:remote": "cd worker && npx wrangler d1 migrations apply short-link-db --remote",
-    "deploy": "npm run build && cd worker && npx wrangler deploy"
+    "deploy": "npm run build && cd worker && npx wrangler deploy",
+    "deploy:ci": "npm run build:config && cd worker && npx wrangler deploy --config wrangler.build.toml"
   },
   "workspaces": [
     "frontend",

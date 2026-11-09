@@ -46,7 +46,7 @@ Dashboard → Turnstile → Add Site：
 
 ## 二、填写配置
 
-编辑仓库中的 `worker/wrangler.toml`，替换以下占位符：
+`worker/wrangler.toml` 里需要替换的占位符：
 
 | 占位符 | 替换为 |
 |--------|--------|
@@ -55,7 +55,34 @@ Dashboard → Turnstile → Add Site：
 | `REPLACE_WITH_TURNSTILE_SITE_KEY` | Turnstile Site Key |
 | `PAGES_DOMAIN` | 你的访问域名，如 `short-link.xxx.workers.dev` |
 
-> 该文件只包含资源 ID，不含密钥，可以安全提交到 GitHub。
+有两种方式，按实例数量选择：
+
+### 方式 1：单实例（直接改文件）
+
+直接编辑 `worker/wrangler.toml` 填入真实值并提交。适合只有你自己一份部署的情况。
+该文件只包含资源 ID 与非敏感变量，不含密钥，可以安全提交。
+
+### 方式 2：多实例 / Git 自动构建（推荐）
+
+**仓库里的 `worker/wrangler.toml` 保持占位符不动**，每个 Cloudflare 项目在自己的
+「构建 → 变量和机密」中设置实例专属变量，构建时由脚本生成 `worker/wrangler.build.toml`（已 gitignore）：
+
+```bash
+npm run build:config   # 等价于 node scripts/gen-wrangler.mjs
+```
+
+| 构建变量 | 必填 | 说明 |
+|----------|------|------|
+| `D1_DATABASE_ID` | ✅ | 本实例的 D1 数据库 ID |
+| `KV_NAMESPACE_ID` | ✅ | 本实例的 KV 命名空间 ID |
+| `TURNSTILE_SITE_KEY` | ✅ | 本实例的 Turnstile Site Key |
+| `PAGES_DOMAIN` | ✅ | 本实例访问域名（不含协议） |
+| `WORKER_NAME` | ⬜ | Worker 名称，默认 `short-link-system` |
+| `D1_DATABASE_NAME` | ⬜ | 数据库名，默认 `short-link-db` |
+| `SMTP_HOST` / `SMTP_PORT` | ⬜ | 默认飞书 SMTP |
+| `SMTP_USER` / `SMTP_FROM` | ⬜ | 发件邮箱 |
+
+> 多个实例共用同一仓库时，各自只配置自己的变量即可，互不覆盖；缺必填变量时构建会直接失败并提示变量名。
 
 ---
 
@@ -110,9 +137,10 @@ npm run deploy      # 先构建前端，再部署 Worker
 1. Cloudflare Dashboard → Workers & Pages → Create → Workers → Connect to Git
 2. 选择你的 GitHub 仓库
 3. 构建配置：
-   - **Build command**: `npm run build`
-   - **Deploy command**: `npx wrangler deploy`
    - **Root directory**: 仓库根目录
+   - **Build command**: `npm ci && npm run build && npm run build:config`
+   - **Deploy command**: `cd worker && npx wrangler deploy --config wrangler.build.toml`
+   - **构建变量**: 按第二节「方式 2」填本实例的 `D1_DATABASE_ID` 等
 4. 保存并部署（首次部署前请先完成第三节的数据库迁移）
 5. 之后每次推送代码，Cloudflare 会自动重新构建部署
 
@@ -158,7 +186,14 @@ npm run dev:frontend
 
 ## 九、多实例部署
 
-每个独立网站重复上述步骤，使用**各自的** D1 数据库与 KV 命名空间即可，代码仓库可以是同一个。
+同一个仓库可以同时被多个 Cloudflare 项目拉取构建，每个实例使用**各自的** D1 / KV：
+
+1. 每个 Cloudflare 项目都连接同一个 GitHub 仓库（私有仓库需在 GitHub App 中授权访问）
+2. 每个项目单独配置「构建变量」：`D1_DATABASE_ID`、`KV_NAMESPACE_ID`、`TURNSTILE_SITE_KEY`、`PAGES_DOMAIN`，可选 `WORKER_NAME`
+3. 构建时各自生成 `worker/wrangler.build.toml`，只在该次构建的容器内生效，不会写入仓库
+4. 密钥（`JWT_SECRET`、`TURNSTILE_SECRET_KEY`、`SMTP_PASS`）在每个 Worker 的 Settings 中单独设置
+5. 数据库迁移在每个实例上各执行一次：`npx wrangler d1 migrations apply short-link-db --remote`
+
 用户、短链、访问日志全部写在各自的 D1 中，互不干扰。
 
 ---

@@ -12,6 +12,8 @@ build/
 # Cloudflare
 .wrangler/
 .dev.vars
+# 多实例部署时由 scripts/gen-wrangler.mjs 生成的实例配置
+worker/wrangler.build.toml
 # 注意：worker/wrangler.toml 需要提交到仓库（仅含资源 ID，不含密钥）
 
 # Environment
