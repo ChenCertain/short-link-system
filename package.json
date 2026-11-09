@@ -12,7 +12,7 @@
     "build:config": "node scripts/gen-wrangler.mjs",
     "db:migrate": "cd worker && npx wrangler d1 migrations apply short-link-db --local",
     "db:migrate:remote": "cd worker && npx wrangler d1 migrations apply short-link-db --remote",
-    "deploy": "npm run build && cd worker && npx wrangler deploy",
+    "check": "cd worker && npx tsc --noEmit && cd ../frontend && npx tsc --noEmit",
     "deploy:ci": "npm run build:config && cd worker && npx wrangler deploy --config wrangler.build.toml"
   },
   "workspaces": [

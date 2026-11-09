@@ -3,7 +3,12 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+/* 深色模式下让滚动条、表单控件等原生元素也使用深色 */
+.dark {
+  color-scheme: dark;
 }
 
 body {

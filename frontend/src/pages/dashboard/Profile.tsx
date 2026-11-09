@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, Mail, MailCheck, Save, ShieldAlert, UserRound } from 'lucide-react'
+import { Check, KeyRound, Mail, MailCheck, Monitor, Moon, Save, ShieldAlert, Sun, UserRound } from 'lucide-react'
 import { profileApi, setToken, type ProfileUser } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge, Button, Card, CardHeader, ErrorText, Input, Label, LoadingBlock } from '@/components/ui'
 import { useToast } from '@/components/Toast'
-import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
+import { cn, formatDateTime, ROLE_LABELS } from '@/lib/utils'
+import { useTheme, type ThemeChoice } from '@/lib/theme'
+
+const THEME_OPTIONS: { key: ThemeChoice; label: string; desc: string; icon: typeof Sun }[] = [
+  { key: 'system', label: '跟随系统', desc: '随操作系统的浅色 / 深色自动切换', icon: Monitor },
+  { key: 'light', label: '浅色', desc: '始终使用浅色主题', icon: Sun },
+  { key: 'dark', label: '深色', desc: '始终使用深色主题', icon: Moon },
+]
 
 export default function Profile() {
   const { show } = useToast()
   const { refresh } = useAuth()
+  const { choice: themeChoice, setTheme } = useTheme()
 
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<ProfileUser | null>(null)
@@ -190,6 +198,50 @@ export default function Profile() {
           </span>
         </div>
       )}
+
+      <Card>
+        <CardHeader title="外观" description="默认跟随系统，选择会保存在本设备浏览器中" />
+        <div className="grid gap-2 p-5 sm:grid-cols-3">
+          {THEME_OPTIONS.map((option) => {
+            const active = themeChoice === option.key
+            return (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setTheme(option.key)}
+                aria-pressed={active}
+                className={cn(
+                  'flex items-start gap-2.5 rounded-xl border px-3 py-3 text-left transition-colors',
+                  active
+                    ? 'border-brand-300 bg-brand-50 dark:border-brand-500/40 dark:bg-brand-500/10'
+                    : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800',
+                )}
+              >
+                <option.icon
+                  className={cn(
+                    'mt-0.5 h-4 w-4 shrink-0',
+                    active ? 'text-brand-600 dark:text-brand-400' : 'text-gray-400',
+                  )}
+                />
+                <span className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      'flex items-center gap-1.5 text-sm font-medium',
+                      active ? 'text-brand-700 dark:text-brand-300' : 'text-gray-900 dark:text-gray-100',
+                    )}
+                  >
+                    {option.label}
+                    {active && <Check className="h-3.5 w-3.5" />}
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-gray-400">
+                    {option.desc}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </Card>
 
       <Card>
         <CardHeader title="账户信息" description="系统分配的信息，不可自行修改" />

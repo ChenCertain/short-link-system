@@ -15,7 +15,7 @@ export function generateShortCode(length: number = 6): string {
 }
 
 // 自定义别名（短码）长度上限
-export const ALIAS_MAX_LENGTH = 64;
+const ALIAS_MAX_LENGTH = 64;
 
 /** 规范化主机名：去协议、去路径、去端口，统一小写 */
 export function normalizeHost(value: string): string {

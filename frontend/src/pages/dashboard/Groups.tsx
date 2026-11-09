@@ -247,12 +247,14 @@ export default function Groups() {
     if (!deletingGroupId) return
     setDeleteLoading(true)
     try {
+      const parentId = detail?.group.parent_id ?? null
       await groupsApi.remove(deletingGroupId)
       show('项目组已删除', 'success')
       setDetail(null)
-      if (selectedId === deletingGroupId) setSelectedId(null)
       setDeletingGroupId(null)
       await loadGroups()
+      // 删除后回到父组，避免右侧详情空白
+      if (selectedId === deletingGroupId) setSelectedId(parentId)
     } catch (err) {
       show((err as Error).message, 'error')
     } finally {
@@ -344,7 +346,8 @@ export default function Groups() {
     if (!selectedId || !permMember) return
     setPermSaving(true)
     try {
-      const overrides = diffFromDefaults(permValue, permMember.group_role)
+      // 基线用「生效身份」：父组管理员即使在子组是普通成员，默认值也按管理员计算
+      const overrides = diffFromDefaults(permValue, permMember.permission_role || permMember.group_role)
       await groupsApi.updateMemberPermissions(selectedId, permMember.id, overrides)
       show(`已更新 ${permMember.name} 的权限`, 'success')
       setPermMember(null)
@@ -395,6 +398,9 @@ export default function Groups() {
   const canConfigMemberPerm = isSuperAdmin || can(detail?.permissions, 'group.member.permission')
   const canCreateChild = isSuperAdmin || can(detail?.permissions, 'group.create_child')
   const canManageDomain = isSuperAdmin || can(detail?.permissions, 'group.domain.manage')
+  // 删除：超管可删任意组；组管理员只能删自己管理组下的子组（需「删除子组」权限）
+  const canDeleteGroup =
+    isSuperAdmin || (!!detail?.group.parent_id && can(detail?.permissions, 'group.delete'))
 
   const openMemberModal = () => {
     setMemberRole('member')
@@ -535,8 +541,17 @@ export default function Groups() {
                           绑定域名
                         </Button>
                       )}
-                      {isSuperAdmin && (
-                        <Button variant="danger" size="sm" onClick={() => setDeletingGroupId(detail.group.id)}>
+                      {canDeleteGroup && (
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setDeletingGroupId(detail.group.id)}
+                          title={
+                            isSuperAdmin && !detail.group.parent_id
+                              ? undefined
+                              : '删除当前子组（组内需已清空短链与子组）'
+                          }
+                        >
                           <Trash2 className="h-4 w-4" />
                           删除
                         </Button>
@@ -1115,38 +1130,42 @@ export default function Groups() {
           </>
         }
       >
-        {permMember && (
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
-              <Badge tone={permMember.group_role === 'admin' ? 'purple' : 'gray'}>
-                {permMember.group_role === 'admin' ? '组管理员' : '成员'}
-              </Badge>
-              <span>
-                默认权限：
-                {permMember.group_role === 'admin'
-                  ? '全部组内权限（含子组，可向下继承）'
-                  : '创建短链、查看组内短链、编辑 / 删除自己的短链'}
-              </span>
+        {permMember && (() => {
+          const baselineRole = permMember.permission_role || permMember.group_role
+          const isAdminBaseline = baselineRole === 'admin'
+          return (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
+                <Badge tone={isAdminBaseline ? 'purple' : 'gray'}>
+                  {isAdminBaseline ? '组管理员' : '成员'}
+                </Badge>
+                <span>
+                  默认权限：
+                  {isAdminBaseline
+                    ? '全部组内权限（含子组，可向下继承）'
+                    : '创建短链、查看组内短链、编辑 / 删除自己的短链'}
+                </span>
+              </div>
+              <PermissionEditor
+                defs={GROUP_PERMISSION_DEFS}
+                value={permValue}
+                onChange={setPermValue}
+                defaults={defaultPermissionMap(baselineRole)}
+                description={`按需为 ${permMember.name} 单独开关权限，保存后立即生效；标记「已单独配置」的项与默认值不同`}
+              />
+              <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                <span>重置为该身份默认权限</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPermValue(defaultPermissionMap(baselineRole))}
+                >
+                  恢复默认
+                </Button>
+              </div>
             </div>
-            <PermissionEditor
-              defs={GROUP_PERMISSION_DEFS}
-              value={permValue}
-              onChange={setPermValue}
-              defaults={defaultPermissionMap(permMember.group_role)}
-              description={`按需为 ${permMember.name} 单独开关权限，保存后立即生效；标记「已单独配置」的项与默认值不同`}
-            />
-            <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-              <span>重置为该身份默认权限</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPermValue(defaultPermissionMap(permMember.group_role))}
-              >
-                恢复默认
-              </Button>
-            </div>
-          </div>
-        )}
+          )
+        })()}
       </Modal>
 
       {/* 编辑成员身份（仅超管） */}
@@ -1248,8 +1267,8 @@ export default function Groups() {
 
       <ConfirmDialog
         open={deletingGroupId !== null}
-        title="删除项目组"
-        description="确定删除该项目组吗？组内短链将解除归属，操作不可恢复。"
+        title={isSuperAdmin && !detail?.group.parent_id ? '删除项目组' : '删除子项目组'}
+        description="确定删除该子项目组吗？组内成员与域名绑定会一并解除，操作不可恢复。组内仍有子组或短链时无法删除。"
         confirmText="确认删除"
         loading={deleteLoading}
         onCancel={() => setDeletingGroupId(null)}

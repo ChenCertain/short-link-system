@@ -207,18 +207,6 @@ export const groupsApi = {
     del<{ success: boolean }>(`/api/groups/${id}/members/${userId}`),
   memberOverview: (id: number, userId: number) =>
     get<MemberOverview>(`/api/groups/${id}/members/${userId}/overview`),
-  memberLinks: (
-    id: number,
-    userId: number,
-    params: { page?: number; pageSize?: number } = {},
-  ) => {
-    const q = new URLSearchParams()
-    if (params.page) q.set('page', String(params.page))
-    if (params.pageSize) q.set('pageSize', String(params.pageSize))
-    return get<{ links: ShortLink[]; total: number; page: number; pageSize: number }>(
-      `/api/groups/${id}/members/${userId}/links?${q}`,
-    )
-  },
   updateMemberPermissions: (id: number, userId: number, permissions: PermissionMap) =>
     put<{ success: boolean; permissions: PermissionMap; effective: PermissionMap }>(
       `/api/groups/${id}/members/${userId}/permissions`,

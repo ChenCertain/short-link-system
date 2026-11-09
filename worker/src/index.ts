@@ -40,13 +40,6 @@ app.onError((err, c) => {
   return c.text('服务器内部错误', 500);
 });
 
-app.notFound((c) => {
-  if (c.req.path.startsWith('/api/')) {
-    return c.json({ error: '接口不存在' }, 404);
-  }
-  return serveStatic(c);
-});
-
 // ========== 健康检查 ==========
 app.get('/api/health', () =>
   jsonResponse({ status: 'ok', service: 'short-link-system', timestamp: Date.now() })

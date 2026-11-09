@@ -225,6 +225,7 @@ export const PERMISSION_DEFS: PermissionDef[] = [
   { key: 'link.review', label: '审核组内短链', description: '通过 / 驳回组内待审核短链', scope: 'group', category: '短链' },
   // ---- 项目组管理 ----
   { key: 'group.create_child', label: '创建子组', description: '在该组下创建子项目组', scope: 'group', category: '项目组管理' },
+  { key: 'group.delete', label: '删除子组', description: '删除自己管理组下的子项目组（组内需已清空）', scope: 'group', category: '项目组管理' },
   { key: 'group.domain.manage', label: '管理组域名', description: '为组绑定 / 解绑可用域名', scope: 'group', category: '项目组管理' },
   { key: 'group.member.add', label: '添加成员', description: '向组内添加成员', scope: 'group', category: '成员管理' },
   { key: 'group.member.remove', label: '移除成员', description: '将成员移出项目组', scope: 'group', category: '成员管理' },
@@ -290,6 +291,11 @@ export async function getGroupPermissions(
     return buildPermissionMap(GROUP_PERMISSION_KEYS, [], {});
   }
 
+  // 沿父组链向上扫描：最近的一条关联记录提供权限覆盖项，
+  // 只要链上任意一层是管理员，就按管理员默认权限（与 isGroupAdminOf 保持一致，
+  // 避免父组管理员同时是子组普通成员时丢失管理权限）。
+  let nearest: { role: 'admin' | 'member'; permissions: string | null } | null = null;
+  let isAdmin = false;
   let current: number | null = groupId;
   for (let i = 0; i < 20 && current; i++) {
     let row: { role: 'admin' | 'member'; permissions: string | null } | null = null;
@@ -307,14 +313,44 @@ export async function getGroupPermissions(
       row = basic ? { role: basic.role, permissions: null } : null;
     }
     if (row) {
-      const overrides = parsePermissionJson(row.permissions);
-      const defaults = row.role === 'admin' ? ADMIN_DEFAULT_PERMISSIONS : MEMBER_DEFAULT_PERMISSIONS;
-      return buildPermissionMap(GROUP_PERMISSION_KEYS, defaults, overrides);
+      if (!nearest) nearest = row;
+      if (row.role === 'admin') isAdmin = true;
     }
     current = await getParentId(db, current);
   }
 
+  if (nearest) {
+    const defaults = isAdmin ? ADMIN_DEFAULT_PERMISSIONS : MEMBER_DEFAULT_PERMISSIONS;
+    return buildPermissionMap(GROUP_PERMISSION_KEYS, defaults, parsePermissionJson(nearest.permissions));
+  }
+
   return buildPermissionMap(GROUP_PERMISSION_KEYS, [], {});
+}
+
+/**
+ * 用户在组内的生效身份：只要父组链上任意一层是管理员，即视为管理员（与 getGroupPermissions 一致）。
+ * 用于前端判断「默认权限基线」，未加入该组返回 null。
+ */
+export async function getGroupPermissionRole(
+  db: D1Database,
+  userId: number,
+  groupId: number | null,
+): Promise<'admin' | 'member' | null> {
+  if (!groupId) return null;
+  let current: number | null = groupId;
+  let found = false;
+  for (let i = 0; i < 20 && current; i++) {
+    const row = await db
+      .prepare('SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?')
+      .bind(userId, current)
+      .first<{ role: 'admin' | 'member' }>();
+    if (row) {
+      found = true;
+      if (row.role === 'admin') return 'admin';
+    }
+    current = await getParentId(db, current);
+  }
+  return found ? 'member' : null;
 }
 
 /** 判断用户在组内是否具备某项权限（超管由调用方先行短路） */

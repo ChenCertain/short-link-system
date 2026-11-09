@@ -57,6 +57,8 @@ export interface GroupMember {
   permissions_override?: PermissionMap
   /** 该成员在当前组的有效权限 */
   permissions?: PermissionMap
+  /** 在当前组的生效身份：父组管理员即使在子组是普通成员，也按管理员基线 */
+  permission_role?: 'admin' | 'member'
   permissions_updated_at?: number | null
 }
 

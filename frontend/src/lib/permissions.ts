@@ -22,6 +22,7 @@ export const PERMISSION_DEFS: PermissionDef[] = [
   { key: 'link.review', label: '审核组内短链', description: '通过 / 驳回组内待审核短链', scope: 'group', category: '短链' },
   // ---- 项目组管理 ----
   { key: 'group.create_child', label: '创建子组', description: '在该组下创建子项目组', scope: 'group', category: '项目组管理' },
+  { key: 'group.delete', label: '删除子组', description: '删除自己管理组下的子项目组（组内需已清空）', scope: 'group', category: '项目组管理' },
   { key: 'group.domain.manage', label: '管理组域名', description: '为组绑定 / 解绑可用域名', scope: 'group', category: '项目组管理' },
   // ---- 成员管理 ----
   { key: 'group.member.add', label: '添加成员', description: '向组内添加成员', scope: 'group', category: '成员管理' },

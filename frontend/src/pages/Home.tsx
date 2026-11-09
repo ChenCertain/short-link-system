@@ -15,6 +15,7 @@ import {
 import { publicApi } from '@/lib/api'
 import { Logo, LogoMark } from '@/components/Logo'
 import { useAuth } from '@/contexts/AuthContext'
+import { useTheme } from '@/lib/theme'
 
 const features = [
   {
@@ -48,7 +49,7 @@ const steps = [
 export default function Home() {
   const { user } = useAuth()
   const [siteName, setSiteName] = useState('短链管理')
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  const { isDark: dark, toggle: toggleTheme } = useTheme()
 
   useEffect(() => {
     publicApi
@@ -59,13 +60,6 @@ export default function Home() {
       // 站点名只影响展示，取不到时用默认值，不影响页面渲染
       .catch(() => undefined)
   }, [])
-
-  const toggleTheme = () => {
-    const next = !dark
-    setDark(next)
-    document.documentElement.classList.toggle('dark', next)
-    localStorage.setItem('sl_theme', next ? 'dark' : 'light')
-  }
 
   return (
     <div className="relative isolate min-h-screen overflow-hidden bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">

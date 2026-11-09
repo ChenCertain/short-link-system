@@ -19,7 +19,9 @@ import {
   getManageableDomainIds,
   isDomainBoundToAncestor,
   getGroupPermissions,
+  getGroupPermissionRole,
   hasGroupPermission,
+  getManagedGroupIds,
   getManagedScopeIds,
   parsePermissionJson,
   buildPermissionMap,
@@ -184,11 +186,13 @@ groups.get('/:id', async (c) => {
     ).bind(groupId).all<MemberRow>();
   }
 
-  // 每个成员在该组的有效权限（用于前端显示与配置弹窗初始值）
+  // 每个成员在该组的有效权限与生效身份（用于前端显示与配置弹窗初始值 / 默认基线）
   const memberPermissions: Record<number, Record<string, boolean>> = {};
+  const memberPermissionRole: Record<number, 'admin' | 'member' | null> = {};
   if (canManage) {
     for (const member of members.results) {
       memberPermissions[member.id] = await getGroupPermissions(c.env.DB, member.id, groupId);
+      memberPermissionRole[member.id] = await getGroupPermissionRole(c.env.DB, member.id, groupId);
     }
   }
 
@@ -227,6 +231,7 @@ groups.get('/:id', async (c) => {
       ...member,
       permissions_override: parsePermissionJson(member.permissions_override),
       permissions: memberPermissions[member.id] || {},
+      permission_role: memberPermissionRole[member.id] ?? member.group_role,
     })),
     domains: domains.results,
     links: links.results.map((row) => {
@@ -402,19 +407,48 @@ groups.put('/:id', requireRole('super_admin'), async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 删除项目组（仅超级管理员） ==========
-groups.delete('/:id', requireRole('super_admin'), async (c) => {
+// ========== 删除项目组（超级管理员；组管理员可删除自己管理组下的子组） ==========
+groups.delete('/:id', async (c) => {
   const groupId = parseInt(c.req.param('id'));
   if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组 ID' }, 400);
+  const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  const group = await c.env.DB.prepare('SELECT id, name, parent_id FROM project_groups WHERE id = ?')
+    .bind(groupId)
+    .first<{ id: number; name: string; parent_id: number | null }>();
+  if (!group) return jsonResponse({ error: '项目组不存在' }, 404);
+
+  if (!isSuperAdmin) {
+    // 组管理员：只能删除「自己管理组的严格下级组」，且需要该组内具备删除子组权限
+    const directManaged = await getManagedGroupIds(c.env.DB, currentUser.user_id);
+    if (directManaged.includes(groupId)) {
+      return jsonResponse({ error: '不能删除自己直接管理的项目组，请联系超级管理员' }, 403);
+    }
+    const scopeIds = await getManagedScopeIds(c.env.DB, currentUser.user_id);
+    if (!scopeIds.includes(groupId)) {
+      return jsonResponse({ error: '只能删除自己管理的项目组下的子组' }, 403);
+    }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.delete'))) {
+      return jsonResponse({ error: '没有删除子组的权限' }, 403);
+    }
+  }
 
   const subGroups = await c.env.DB.prepare('SELECT COUNT(*) as count FROM project_groups WHERE parent_id = ?').bind(groupId).first<{ count: number }>();
   if (subGroups && subGroups.count > 0) {
     return jsonResponse({ error: '请先删除子项目组' }, 400);
   }
 
+  const linkCount = await c.env.DB.prepare('SELECT COUNT(*) as count FROM short_links WHERE group_id = ?')
+    .bind(groupId)
+    .first<{ count: number }>();
+  if (linkCount && linkCount.count > 0) {
+    return jsonResponse({ error: `组内还有 ${linkCount.count} 条短链，请先转移或删除后再删除项目组` }, 400);
+  }
+
   await c.env.DB.prepare('DELETE FROM project_groups WHERE id = ?').bind(groupId).run();
 
-  await logAudit(c.env.DB, c.get('user').user_id, 'delete_group', c.req.raw, 'group', groupId);
+  await logAudit(c.env.DB, currentUser.user_id, 'delete_group', c.req.raw, 'group', groupId, group.name);
 
   return jsonResponse({ success: true });
 });
@@ -795,62 +829,6 @@ groups.get('/:id/members/:userId/overview', async (c) => {
     },
     links: links.results,
     scope_group_ids: scopeIds,
-  });
-});
-
-// ========== 成员在管理范围内创建的短链（分页） ==========
-groups.get('/:id/members/:userId/links', async (c) => {
-  const groupId = parseInt(c.req.param('id'));
-  const userId = parseInt(c.req.param('userId'));
-  if (!Number.isFinite(groupId) || !Number.isFinite(userId)) {
-    return jsonResponse({ error: '无效的 ID' }, 400);
-  }
-  const currentUser = c.get('user');
-  const isSuperAdmin = currentUser.role === 'super_admin';
-
-  if (!isSuperAdmin) {
-    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
-      return jsonResponse({ error: '权限不足' }, 403);
-    }
-    const allowed =
-      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.permission')) ||
-      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'link.view.group'));
-    if (!allowed) {
-      return jsonResponse({ error: '你没有查看成员短链的权限' }, 403);
-    }
-  }
-
-  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
-  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
-  const offset = (page - 1) * pageSize;
-
-  const scopeIds = isSuperAdmin ? null : await getManagedScopeIds(c.env.DB, currentUser.user_id);
-  if (scopeIds && scopeIds.length === 0) {
-    return jsonResponse({ links: [], total: 0, page, pageSize });
-  }
-  const scopeFilter = scopeIds ? ` AND pg.id IN (${scopeIds.map(() => '?').join(',')})` : '';
-  const scopeParams: number[] = scopeIds || [];
-
-  const rows = await c.env.DB.prepare(
-    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.click_count, sl.created_at,
-      sl.group_id, d.domain as domain_name, pg.name as group_name
-     FROM short_links sl
-     JOIN project_groups pg ON sl.group_id = pg.id
-     LEFT JOIN domains d ON sl.domain_id = d.id
-     WHERE sl.created_by = ?${scopeFilter}
-     ORDER BY sl.created_at DESC LIMIT ? OFFSET ?`
-  ).bind(userId, ...scopeParams, pageSize, offset).all();
-
-  const total = await c.env.DB.prepare(
-    `SELECT COUNT(*) as total FROM short_links sl JOIN project_groups pg ON sl.group_id = pg.id
-     WHERE sl.created_by = ?${scopeFilter}`
-  ).bind(userId, ...scopeParams).first<{ total: number }>();
-
-  return jsonResponse({
-    links: rows.results,
-    total: total?.total || 0,
-    page,
-    pageSize,
   });
 });
 

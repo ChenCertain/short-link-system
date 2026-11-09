@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -12,11 +12,12 @@ import {
   Sun,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useTheme } from '@/lib/theme'
 
 export default function NotFound() {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  const { isDark: dark, toggle: toggleTheme } = useTheme()
 
   useEffect(() => {
     const previous = document.title
@@ -25,13 +26,6 @@ export default function NotFound() {
       document.title = previous
     }
   }, [])
-
-  const toggleTheme = () => {
-    const next = !dark
-    setDark(next)
-    document.documentElement.classList.toggle('dark', next)
-    localStorage.setItem('sl_theme', next ? 'dark' : 'light')
-  }
 
   const isSuperAdmin = user?.role === 'super_admin'
 

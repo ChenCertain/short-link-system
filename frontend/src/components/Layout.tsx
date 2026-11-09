@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
@@ -20,6 +20,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { LogoMark } from '@/components/Logo'
 import { cn, ROLE_LABELS } from '@/lib/utils'
+import { useTheme } from '@/lib/theme'
 
 interface NavItem {
   to: string
@@ -47,25 +48,10 @@ const navItems: NavItem[] = [
   { to: '/dashboard/profile', label: '个人设置', icon: UserRound },
 ]
 
-function useDarkMode() {
-  const [dark, setDark] = useState(() => {
-    const stored = localStorage.getItem('sl_theme')
-    if (stored) return stored === 'dark'
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
-  })
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-    localStorage.setItem('sl_theme', dark ? 'dark' : 'light')
-  }, [dark])
-
-  return { dark, toggle: () => setDark((v) => !v) }
-}
-
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const { dark, toggle } = useDarkMode()
+  const { isDark: dark, toggle: toggleTheme, choice: themeChoice } = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const isSuperAdmin = user?.role === 'super_admin'
@@ -159,7 +145,12 @@ export default function Layout() {
           </Link>
           <div className="flex gap-2">
             <button
-              onClick={toggle}
+              onClick={toggleTheme}
+              title={
+                themeChoice === 'system'
+                  ? '当前跟随系统，点击可固定为浅色 / 深色'
+                  : '切换浅色 / 深色'
+              }
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}

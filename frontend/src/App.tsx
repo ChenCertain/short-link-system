@@ -5,9 +5,9 @@ import { ToastProvider } from '@/components/Toast'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Layout from '@/components/Layout'
-import Home from '@/pages/Home'
 
-// 除首页外的页面按需加载，显著减小首屏 JS 体积
+// 页面全部按需加载，显著减小首屏 JS 体积
+const Home = lazy(() => import('@/pages/Home'))
 const Login = lazy(() => import('@/pages/Login'))
 const InitAdmin = lazy(() => import('@/pages/InitAdmin'))
 const Overview = lazy(() => import('@/pages/dashboard/Overview'))
