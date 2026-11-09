@@ -64,9 +64,9 @@ npm install
 
 单实例：直接编辑 `worker/wrangler.toml`，填入 D1 数据库 ID、KV 命名空间 ID、Turnstile Site Key 与访问域名。
 
-多实例 / Git 自动构建：仓库内保持占位符不动，在每个 Cloudflare 项目里配置构建变量（`D1_DATABASE_ID`、`KV_NAMESPACE_ID`、`TURNSTILE_SITE_KEY`、`PAGES_DOMAIN`），构建时执行 `npm run build:config` 生成本次实例专属配置，互不覆盖。
+多实例 / Git 自动构建：仓库内配置保持留空，在每个 Cloudflare 项目里配置构建变量 `D1_DATABASE_ID`、`KV_NAMESPACE_ID`（必填），构建时执行 `npm run build:config` 生成本次实例专属配置，互不覆盖。`TURNSTILE_SITE_KEY`、`PAGES_DOMAIN`、`SMTP_*` 均可留空，Turnstile 留空时自动关闭人机验证。
 
-敏感信息（`JWT_SECRET`、`TURNSTILE_SECRET_KEY`、`SMTP_PASS`）通过 Cloudflare Secret 配置，详见 [部署指南](./DEPLOY.md)。
+敏感信息（`JWT_SECRET`、`SMTP_PASS`）通过 Cloudflare Secret 配置；`TURNSTILE_SECRET_KEY` 仅在启用 Turnstile 时必填。详见 [部署指南](./DEPLOY.md)。
 
 ### 3. 数据库迁移
 
@@ -101,8 +101,8 @@ npm run deploy   # 构建并部署到 Cloudflare
 | `DB` | D1 数据库绑定 |
 | `KV` | KV 命名空间绑定 |
 | `JWT_SECRET` | JWT 签名密钥（Secret） |
-| `TURNSTILE_SITE_KEY` | Turnstile 站点密钥 |
-| `TURNSTILE_SECRET_KEY` | Turnstile 密钥（Secret） |
+| `TURNSTILE_SITE_KEY` | Turnstile 站点密钥（可留空，留空即关闭人机验证） |
+| `TURNSTILE_SECRET_KEY` | Turnstile 密钥（Secret，启用时必填） |
 | `SMTP_HOST` / `SMTP_PORT` | SMTP 地址与端口 |
 | `SMTP_USER` / `SMTP_PASS` | SMTP 账号与密码（`SMTP_PASS` 为 Secret） |
 | `SMTP_FROM` | 发件人地址 |

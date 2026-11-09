@@ -21,12 +21,12 @@ const fields = [
   { key: 'database_name', env: 'D1_DATABASE_NAME', required: false, label: 'D1 数据库名' },
   { key: 'database_id', env: 'D1_DATABASE_ID', required: true, label: 'D1 数据库 ID' },
   { key: 'id', env: 'KV_NAMESPACE_ID', required: true, label: 'KV 命名空间 ID' },
-  { key: 'TURNSTILE_SITE_KEY', env: 'TURNSTILE_SITE_KEY', required: true, label: 'Turnstile Site Key' },
+  { key: 'TURNSTILE_SITE_KEY', env: 'TURNSTILE_SITE_KEY', required: false, label: 'Turnstile Site Key', defaultValue: '' },
   { key: 'SMTP_HOST', env: 'SMTP_HOST', required: false, label: 'SMTP 地址' },
   { key: 'SMTP_PORT', env: 'SMTP_PORT', required: false, label: 'SMTP 端口' },
   { key: 'SMTP_USER', env: 'SMTP_USER', required: false, label: 'SMTP 账号' },
   { key: 'SMTP_FROM', env: 'SMTP_FROM', required: false, label: '发件人地址' },
-  { key: 'PAGES_DOMAIN', env: 'PAGES_DOMAIN', required: true, label: '访问域名' },
+  { key: 'PAGES_DOMAIN', env: 'PAGES_DOMAIN', required: false, label: '访问域名', defaultValue: '' },
 ]
 
 const overrides = new Map()
@@ -37,6 +37,9 @@ for (const field of fields) {
     overrides.set(field.key, value)
   } else if (field.required) {
     missing.push(field.env)
+  } else if (field.defaultValue !== undefined) {
+    // 可选字段未提供时写入空串，避免把模板占位符带到部署配置里
+    overrides.set(field.key, field.defaultValue)
   }
 }
 
@@ -70,5 +73,9 @@ writeFileSync(outputFile, output.endsWith('\n') ? output : output + '\n', 'utf8'
 console.log('[gen-wrangler] 已生成 worker/wrangler.build.toml')
 for (const field of fields) {
   const value = overrides.get(field.key)
-  if (value) console.log(`  ${field.label}: ${value}`)
+  if (value) {
+    console.log(`  ${field.label}: ${value}`)
+  } else if (field.defaultValue === '') {
+    console.log(`  ${field.label}: 未设置（对应功能自动关闭）`)
+  }
 }

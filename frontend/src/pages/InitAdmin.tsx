@@ -55,7 +55,8 @@ export default function InitAdmin() {
       setError('两次输入的密码不一致')
       return
     }
-    if (!turnstileToken) {
+    // 未配置 Turnstile 时不渲染组件，也不要求 token
+    if (siteKey && !turnstileToken) {
       setError('请完成人机验证')
       return
     }

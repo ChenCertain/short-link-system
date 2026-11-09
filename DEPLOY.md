@@ -1,210 +1,220 @@
-# 部署指南
+# 部署指南（傻瓜版）
 
-本项目部署形态为 **一个 Cloudflare Worker（同时承载前端静态资源 + API + 短链跳转）**，
-数据存放在 D1，会话/验证码存放在 KV，因此：
+照着下面顺序做，一步一步来，不用理解原理。
 
-- 仓库里只有代码，**不包含任何用户与短链数据**
-- 每个网站可以 Fork 本仓库后独立部署，使用各自的 D1 / KV，数据互不影响
+整个系统只有 **一个 Cloudflare Worker**：网页、接口、短链跳转都由它负责。
+数据放在 **D1**（数据库），验证码放 **KV**（缓存）。
+**一个仓库可以部署成很多个独立站点**，每个站点用自己的 D1 和 KV，数据互不影响。
 
----
-
-## 前置条件
-
-- Cloudflare 账户（免费套餐即可）
-- GitHub 账户
+一共 10 步，大约 10 分钟。
 
 ---
 
-## 一、创建 Cloudflare 资源
+## 开始前准备
 
-### 1. 创建 D1 数据库
+- 一个 Cloudflare 账号（免费版够用）
+- 一个 GitHub 账号，并且仓库已经推到 GitHub（本仓库：`ChenCertain/short-link-system`）
+- 电脑上装了 Node.js（18 或更新），只有「第 6 步跑数据库迁移」和「本地开发」需要
 
-在 Cloudflare Dashboard → Storage & Databases → D1 中创建，或命令行：
-
-```bash
-npx wrangler d1 create short-link-db
-```
-
-记下输出的 `database_id`。
-
-### 2. 创建 KV 命名空间
-
-```bash
-npx wrangler kv namespace create SHORT_LINK_KV
-```
-
-记下输出的 `id`。
-
-### 3. 创建 Turnstile
-
-Dashboard → Turnstile → Add Site：
-
-- 域名填写你将要访问站点的域名（例如 `short-link.xxx.workers.dev` 或自定义域名）
-- 记录 **Site Key** 和 **Secret Key**
+不用提前准备域名，也不用提前准备 Turnstile，先用 Cloudflare 送的免费域名跑起来，以后随时补。
 
 ---
 
-## 二、填写配置
+## 第 1 步：创建数据库（D1）
 
-`worker/wrangler.toml` 里需要替换的占位符：
+Cloudflare 控制台 → 左侧 **Storage & Databases** → **D1 SQL Database** → **Create**：
 
-| 占位符 | 替换为 |
-|--------|--------|
-| `REPLACE_WITH_YOUR_D1_DATABASE_ID` | 第 1 步的 `database_id` |
-| `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` | 第 2 步的 `id` |
-| `REPLACE_WITH_TURNSTILE_SITE_KEY` | Turnstile Site Key |
-| `PAGES_DOMAIN` | 你的访问域名，如 `short-link.xxx.workers.dev` |
+- 名称填 `short-link-db`
+- 创建完成后，页面上有一串 **Database ID**，复制下来（后面第 4 步要用）
 
-有两种方式，按实例数量选择：
-
-### 方式 1：单实例（直接改文件）
-
-直接编辑 `worker/wrangler.toml` 填入真实值并提交。适合只有你自己一份部署的情况。
-该文件只包含资源 ID 与非敏感变量，不含密钥，可以安全提交。
-
-### 方式 2：多实例 / Git 自动构建（推荐）
-
-**仓库里的 `worker/wrangler.toml` 保持占位符不动**，每个 Cloudflare 项目在自己的
-「构建 → 变量和机密」中设置实例专属变量，构建时由脚本生成 `worker/wrangler.build.toml`（已 gitignore）：
-
-```bash
-npm run build:config   # 等价于 node scripts/gen-wrangler.mjs
-```
-
-| 构建变量 | 必填 | 说明 |
-|----------|------|------|
-| `D1_DATABASE_ID` | ✅ | 本实例的 D1 数据库 ID |
-| `KV_NAMESPACE_ID` | ✅ | 本实例的 KV 命名空间 ID |
-| `TURNSTILE_SITE_KEY` | ✅ | 本实例的 Turnstile Site Key |
-| `PAGES_DOMAIN` | ✅ | 本实例访问域名（不含协议） |
-| `WORKER_NAME` | ⬜ | Worker 名称，默认 `short-link-system` |
-| `D1_DATABASE_NAME` | ⬜ | 数据库名，默认 `short-link-db` |
-| `SMTP_HOST` / `SMTP_PORT` | ⬜ | 默认飞书 SMTP |
-| `SMTP_USER` / `SMTP_FROM` | ⬜ | 发件邮箱 |
-
-> 多个实例共用同一仓库时，各自只配置自己的变量即可，互不覆盖；缺必填变量时构建会直接失败并提示变量名。
+> 想用命令行也行：`npx wrangler d1 create short-link-db`
 
 ---
 
-## 三、运行数据库迁移
+## 第 2 步：创建缓存（KV）
 
-本地验证（写入本地 sqlite）：
+控制台 → **Storage & Databases** → **KV** → **Create a namespace**：
 
-```bash
-npm run db:migrate
-```
+- 名称填 `SHORT_LINK_KV`
+- 创建完成后，复制那一串 **Namespace ID**（后面第 4 步要用）
 
-生产环境（写入远程 D1）：
-
-```bash
-npm run db:migrate:remote
-```
+> 命令行：`npx wrangler kv namespace create SHORT_LINK_KV`
 
 ---
 
-## 四、设置密钥
+## 第 3 步：让 Cloudflare 读取你的仓库
 
-敏感信息不要写进仓库，用 Secret 方式配置（Dashboard → Workers → 你的 Worker → Settings → Variables and Secrets → Add，类型选 Secret）：
+1. 打开 **Workers & Pages** → **Create** → **Workers** → **Connect to Git**
+2. 第一次会跳去 GitHub 授权，点同意
+3. **如果仓库是私有的**（本仓库就是），还要多做一步：
+   GitHub → 右上角头像 → **Settings** → **Applications** → **Cloudflare Workers and Pages** → **Configure**
+   → Repository access → **Only select repositories** → 勾选 `short-link-system` → Save
+   不做这一步，仓库不会出现在列表里
+4. 回到 Cloudflare，选中仓库 `ChenCertain/short-link-system`，点下一步
 
-| 名称 | 说明 |
-|------|------|
-| `JWT_SECRET` | 随机长字符串（建议 32 位以上） |
-| `TURNSTILE_SECRET_KEY` | Turnstile Secret Key |
-| `SMTP_PASS` | 飞书邮箱 SMTP 密码 |
+**构建配置照抄下面这张表：**
 
-命令行方式同样可以：
+| 配置项 | 填什么 |
+|---|---|
+| 生产分支 | `main` |
+| 根目录 / Root directory | `/`（仓库根目录，不用改） |
+| 构建命令 / Build command | `npm ci && npm run build && npm run build:config` |
+| 部署命令 / Deploy command | `cd worker && npx wrangler deploy --config wrangler.build.toml` |
+
+不用点部署，先去第 4 步填变量。
+
+---
+
+## 第 4 步：填构建变量（每个实例各填一份）
+
+还在同一个页面，找到 **Build variables / 构建变量**（有的界面叫 Variables and Secrets），添加：
+
+| 变量名 | 必填 | 填什么 |
+|---|---|---|
+| `D1_DATABASE_ID` | ✅ | 第 1 步复制的 Database ID |
+| `KV_NAMESPACE_ID` | ✅ | 第 2 步复制的 Namespace ID |
+| `WORKER_NAME` | 可选 | Worker 名字，默认 `short-link-system`；做第二个站点时改成别的，比如 `short-link-b` |
+| `PAGES_DOMAIN` | 可选 | 访问域名，不知道就**先空着**，不影响部署 |
+| `TURNSTILE_SITE_KEY` | 可选 | 人机验证 Key，不知道就**先空着** |
+| `SMTP_HOST` / `SMTP_PORT` | 可选 | 邮箱服务器，默认飞书 `smtp.feishu.cn` / `465` |
+| `SMTP_USER` / `SMTP_FROM` | 可选 | 发验证码的邮箱，不填就用仓库默认值 |
+
+**只填前两个也能部署**。仓库里的 `worker/wrangler.toml` 不用动，构建时会自动按你的变量生成一份临时配置，不会写回仓库，所以多个站点互不影响。
+
+---
+
+## 第 5 步：点部署
+
+点 **Deploy**，等 2~3 分钟。
+
+- 构建日志最后出现 `Deployed short-link-system` 就是成功
+- 页面会给你一个免费域名，形如 `https://short-link-system.xxx.workers.dev`，**记下来**
+- 部署失败看日志最后几行，最常见是变量名写错或没填
+
+---
+
+## 第 6 步：建表（只做一次）
+
+上面的部署只上传代码，**数据库还是空的**，必须跑一次迁移。
+
+在电脑上下载/克隆仓库后，打开终端（Windows 用 PowerShell），在仓库根目录执行：
+
+**Windows PowerShell：**
+
+```powershell
+cd worker
+$env:D1_DATABASE_ID="第1步的ID"
+$env:KV_NAMESPACE_ID="第2步的ID"
+node ../scripts/gen-wrangler.mjs
+npx wrangler login          # 第一次需要，浏览器点授权
+npx wrangler d1 migrations apply short-link-db --remote --config wrangler.build.toml
+```
+
+**macOS / Linux：**
 
 ```bash
 cd worker
-npx wrangler secret put JWT_SECRET
-npx wrangler secret put TURNSTILE_SECRET_KEY
-npx wrangler secret put SMTP_PASS
+D1_DATABASE_ID=第1步的ID KV_NAMESPACE_ID=第2步的ID node ../scripts/gen-wrangler.mjs
+npx wrangler login
+npx wrangler d1 migrations apply short-link-db --remote --config wrangler.build.toml
 ```
 
----
+看到 `Migrations applied` 或 `✅` 就好了。
 
-## 五、部署
-
-### 方式 A：命令行部署（最快）
-
-```bash
-npm install
-npm run deploy      # 先构建前端，再部署 Worker
-```
-
-### 方式 B：GitHub 自动部署
-
-1. Cloudflare Dashboard → Workers & Pages → Create → Workers → Connect to Git
-2. 选择你的 GitHub 仓库
-3. 构建配置：
-   - **Root directory**: 仓库根目录
-   - **Build command**: `npm ci && npm run build && npm run build:config`
-   - **Deploy command**: `cd worker && npx wrangler deploy --config wrangler.build.toml`
-   - **构建变量**: 按第二节「方式 2」填本实例的 `D1_DATABASE_ID` 等
-4. 保存并部署（首次部署前请先完成第三节的数据库迁移）
-5. 之后每次推送代码，Cloudflare 会自动重新构建部署
+> 每个实例都要在自己的库上跑一次；同一个实例以后升级只要再跑一次同样命令。
 
 ---
 
-## 六、首次访问：创建管理员
+## 第 7 步：设置 3 个密钥（Secret）
 
-打开站点 → 自动跳转 `/init`：
+控制台 → **Workers & Pages** → 点你的 Worker → **Settings** → **Variables and Secrets** → **Add**，类型选 **Secret**：
 
-1. 填写管理员邮箱、姓名、密码
-2. 完成 Turnstile 人机验证
-3. 点击「发送验证码」，邮件主题为 **短链接管理系统登陆/注册验证**
-4. 输入验证码 → 创建超级管理员
-5. 初始化完成后 `/init` 页面自动失效，改用 `/login` 登录
+| 名称 | 填什么 | 要不要必填 |
+|---|---|---|
+| `JWT_SECRET` | 随便一串 32 位以上的字母数字，越乱越好 | ✅ 必填 |
+| `SMTP_PASS` | 邮箱的 SMTP 密码/授权码 | 发验证码用，必填 |
+| `TURNSTILE_SECRET_KEY` | Turnstile 的 Secret Key | **不用填**，留空即关闭人机验证 |
 
----
-
-## 七、本地开发
-
-```bash
-# 终端 1：Worker（默认 http://localhost:8787）
-npm run dev:worker
-
-# 终端 2：前端（默认 http://localhost:5173，已代理 /api 到 8787）
-npm run dev:frontend
-```
-
-首次本地开发需要先执行 `npm run db:migrate` 生成并迁移本地数据库。
-
-本地调试验证码：未配置 `SMTP_HOST/SMTP_USER/SMTP_PASS` 时，验证码会打印在 Worker 控制台。
+填完点 **Deploy**（或 Save）让它生效。Secret 不会被以后每次部署覆盖。
 
 ---
 
-## 八、添加自定义域名
+## 第 8 步：打开网站，创建管理员
 
-1. 在 Cloudflare 中把域名接入（NS 指向 Cloudflare）
-2. 管理后台 → 域名管理 → 添加域名（如 `sl.example.com`）
-3. 按弹窗提示在 DNS 添加 `CNAME` 记录，指向你的 Worker 域名
-4. 在 Workers → 你的 Worker → Settings → Domains & Routes 中绑定该自定义域名
-5. 回到域名管理点击「验证」，状态变为「活跃」后即可用于生成短链
+浏览器打开第 5 步那个 `xxx.workers.dev` 地址，会自动跳到 `/init`：
+
+1. 填姓名、邮箱、密码（密码至少 8 位）
+2. 点「获取邮箱验证码」
+3. 去邮箱收信（主题：短链接管理系统登陆/注册验证），把 6 位验证码填进去
+4. 提交 → 创建成功，自动登录进入控制台
+
+之后就从这个地址的 `/login` 登录，`/init` 会自动失效。
+
+> 没收到邮件：检查 `SMTP_USER` / `SMTP_FROM` / `SMTP_PASS` 是否填对，Cloudflare 只支持 465 端口。
 
 ---
 
-## 九、多实例部署
+## 第 9 步：想再开一个独立站点？
 
-同一个仓库可以同时被多个 Cloudflare 项目拉取构建，每个实例使用**各自的** D1 / KV：
+同一个仓库可以开无数个站点，每个站点数据独立。做法：
 
-1. 每个 Cloudflare 项目都连接同一个 GitHub 仓库（私有仓库需在 GitHub App 中授权访问）
-2. 每个项目单独配置「构建变量」：`D1_DATABASE_ID`、`KV_NAMESPACE_ID`、`TURNSTILE_SITE_KEY`、`PAGES_DOMAIN`，可选 `WORKER_NAME`
-3. 构建时各自生成 `worker/wrangler.build.toml`，只在该次构建的容器内生效，不会写入仓库
-4. 密钥（`JWT_SECRET`、`TURNSTILE_SECRET_KEY`、`SMTP_PASS`）在每个 Worker 的 Settings 中单独设置
-5. 数据库迁移在每个实例上各执行一次：`npx wrangler d1 migrations apply short-link-db --remote`
+1. 回到 **Workers & Pages** → **Create** → **Connect to Git**，还是选同一个仓库
+2. 新建一套 D1 + KV（第 1、2 步），拿到新的 ID
+3. 构建配置照抄第 3 步那张表
+4. 构建变量填**这一套新的** ID，`WORKER_NAME` 改成新名字（如 `short-link-b`）
+5. 部署，然后对新库跑第 6 步迁移，再配第 7 步的 Secret
 
-用户、短链、访问日志全部写在各自的 D1 中，互不干扰。
+需要注意：
+
+- 仓库里的配置文件一直是空的/占位的，**不要为了某个站点去改它**，否则会影响其他站点
+- 每个站点的 Secret、迁移都要单独做
+- 私有仓库要在 GitHub App 里授权，多个仓库/账号同理
+
+---
+
+## 第 10 步：以后再加 Turnstile（可选）
+
+不必提前填写最终域名，等站点跑起来再说：
+
+1. 控制台 → **Turnstile** → **Add Site**
+2. Hostname 填你现在实际使用的域名（`xxx.workers.dev` 或你自己的域名，可以加多个）
+3. 拿到 Site Key 和 Secret Key
+4. 把 Site Key 填到构建变量 `TURNSTILE_SITE_KEY`，把 Secret Key 加到 Worker 的 Secret `TURNSTILE_SECRET_KEY`
+5. 重新部署一次，再打开登录页就能看到人机验证
+
+没配置 Turnstile 时，登录页不会显示验证框，也不会报错，功能完全可用。
+
+---
+
+## 第 11 步：绑定自己的域名（可选）
+
+1. 域名 NS 指向 Cloudflare
+2. 控制台 → 你的 Worker → **Settings** → **Domains & Routes** → **Add custom domain**，填 `sl.example.com`
+3. 等状态变成 Active
+4. 进管理后台 → **域名管理** → 添加 `sl.example.com` → 按提示在 DNS 加 CNAME，指向你的 Worker 域名
+5. 回到后台点「验证」，显示「活跃」后就能用它生成短链了
 
 ---
 
 ## 常见问题
 
-**Q：邮件发送失败？**
-A：Cloudflare Workers 通过 TCP Sockets 直连 SMTP，仅支持 SSL 端口（465）。若使用 587 STARTTLS 需改用第三方 HTTP 邮件 API。
+**构建报「缺少必填环境变量: D1_DATABASE_ID」**
+第 4 步变量没填或名字拼错，注意全大写、下划线。
 
-**Q：短链访问 404？**
-A：确认 `worker/wrangler.toml` 中 `[assets] directory = "../frontend/dist"` 正确，且部署前已执行 `npm run build`。
+**构建成功但打开页面 500 / 报 no such table**
+第 6 步迁移没跑，或者跑到了另一个数据库上。
 
-**Q：登录一直提示验证码错误？**
-A：验证码有效期 10 分钟，且一次性使用；重新点击发送即可。
+**部署成功但页面白屏、404**
+构建命令没写全，缺 `npm run build`，前端产物 `frontend/dist` 不存在。
+
+**私有仓库在列表里找不到**
+GitHub App 没授权该仓库，见第 3 步第 3 点。
+
+**登录时一直提示验证码错误**
+验证码 10 分钟有效且只能用一次，重新点发送；或 `SMTP_PASS` 错了。
+
+**推送代码没触发自动部署**
+确认推的是 `main` 分支，且 Cloudflare 项目里生产分支设置的是 `main`。
+
+**多个站点会不会互相覆盖数据？**
+不会。数据只存在各自的 D1 里；代码只从同一个仓库读，配置在构建时临时生成。

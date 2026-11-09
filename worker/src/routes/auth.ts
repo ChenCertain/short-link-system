@@ -15,6 +15,18 @@ import { getManagedGroupIds } from '../permissions';
 
 const auth = new Hono<{ Bindings: Env }>();
 
+// 是否启用了 Turnstile：未配置或仍是模板占位符时视为未启用，自动跳过人机验证
+function turnstileEnabled(env: Env): boolean {
+  const secret = (env.TURNSTILE_SECRET_KEY || '').trim();
+  return secret !== '' && !secret.startsWith('REPLACE_WITH');
+}
+
+// 返回给前端渲染的 Site Key，占位符或空值时返回空串（前端不渲染组件）
+function turnstileSiteKey(env: Env): string {
+  const key = (env.TURNSTILE_SITE_KEY || '').trim();
+  return key.startsWith('REPLACE_WITH') ? '' : key;
+}
+
 // Turnstile 验证
 async function verifyTurnstile(token: string, secret: string): Promise<boolean> {
   const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
@@ -41,7 +53,7 @@ auth.get('/init-status', async (c) => {
   return jsonResponse({
     initialized,
     site_name: siteNameResult?.value || '短链管理系统',
-    turnstile_site_key: c.env.TURNSTILE_SITE_KEY,
+    turnstile_site_key: turnstileSiteKey(c.env),
   });
 });
 
@@ -71,13 +83,15 @@ auth.post('/init', async (c) => {
     return jsonResponse({ error: '密码长度至少 8 位' }, 400);
   }
 
-  // Turnstile 验证
-  if (!body.turnstile_token) {
-    return jsonResponse({ error: '请完成人机验证' }, 400);
-  }
-  const turnstileValid = await verifyTurnstile(body.turnstile_token, c.env.TURNSTILE_SECRET_KEY);
-  if (!turnstileValid) {
-    return jsonResponse({ error: '人机验证失败' }, 400);
+  // Turnstile 验证（未启用时自动跳过）
+  if (turnstileEnabled(c.env)) {
+    if (!body.turnstile_token) {
+      return jsonResponse({ error: '请完成人机验证' }, 400);
+    }
+    const turnstileValid = await verifyTurnstile(body.turnstile_token, c.env.TURNSTILE_SECRET_KEY);
+    if (!turnstileValid) {
+      return jsonResponse({ error: '人机验证失败' }, 400);
+    }
   }
 
   // 验证码验证
@@ -135,13 +149,15 @@ auth.post('/send-code', async (c) => {
 
   const purpose = body.purpose || 'login';
 
-  // Turnstile 验证
-  if (!body.turnstile_token) {
-    return jsonResponse({ error: '请完成人机验证' }, 400);
-  }
-  const turnstileValid = await verifyTurnstile(body.turnstile_token, c.env.TURNSTILE_SECRET_KEY);
-  if (!turnstileValid) {
-    return jsonResponse({ error: '人机验证失败' }, 400);
+  // Turnstile 验证（未启用时自动跳过）
+  if (turnstileEnabled(c.env)) {
+    if (!body.turnstile_token) {
+      return jsonResponse({ error: '请完成人机验证' }, 400);
+    }
+    const turnstileValid = await verifyTurnstile(body.turnstile_token, c.env.TURNSTILE_SECRET_KEY);
+    if (!turnstileValid) {
+      return jsonResponse({ error: '人机验证失败' }, 400);
+    }
   }
 
   // 初始化场景：检查系统是否已初始化

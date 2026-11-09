@@ -311,14 +311,16 @@ export default function Domains() {
               </div>
               <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700">
                 <span className="text-gray-500 dark:text-gray-400">目标</span>
-                <span className="break-all text-right font-mono">{dnsInfo.target}</span>
+                <span className="break-all text-right font-mono">
+                  {dnsInfo.target || '在 Worker → Settings → Domains & Routes 查看'}
+                </span>
               </div>
             </div>
             <Button
               variant="outline"
               className="w-full"
               onClick={async () => {
-                const ok = await copyText(`CNAME ${dnsInfo.domain} -> ${dnsInfo.target}`)
+                const ok = await copyText(`CNAME ${dnsInfo.domain} -> ${dnsInfo.target || '<你的 Worker 域名>'}`)
                 show(ok ? '已复制配置' : '复制失败', ok ? 'success' : 'error')
               }}
             >

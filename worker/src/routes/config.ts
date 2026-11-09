@@ -12,9 +12,11 @@ config.get('/public', async (c) => {
   const siteName = await c.env.DB.prepare(
     "SELECT value FROM system_config WHERE key = 'site_name'"
   ).first<{ value: string }>();
+  // 占位符或空值时不返回 Site Key，前端会自动不渲染人机验证
+  const siteKey = (c.env.TURNSTILE_SITE_KEY || '').trim();
   return jsonResponse({
     site_name: siteName?.value || '短链管理系统',
-    turnstile_site_key: c.env.TURNSTILE_SITE_KEY,
+    turnstile_site_key: siteKey.startsWith('REPLACE_WITH') ? '' : siteKey,
   });
 });
 

@@ -66,7 +66,8 @@ domains.post('/', requireRole('super_admin'), async (c) => {
 
   await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'add_domain', c.req.raw, 'domain', domainId as number, JSON.stringify(body));
 
-  // 返回需要配置的 DNS 记录
+  // 返回需要配置的 DNS 记录（PAGES_DOMAIN 可留空，此时提示手动填写 Worker 域名）
+  const workerHost = (c.env.PAGES_DOMAIN || '').trim();
   return jsonResponse({
     success: true,
     id: domainId,
@@ -74,8 +75,10 @@ domains.post('/', requireRole('super_admin'), async (c) => {
     dns_config: {
       type: 'CNAME',
       name: domain,
-      target: c.env.PAGES_DOMAIN || 'short-link-system.pages.dev', // 可在 wrangler 配置 PAGES_DOMAIN 覆盖
-      instructions: '请在 Cloudflare DNS 中添加以上 CNAME 记录，然后在下方点击验证。',
+      target: workerHost,
+      instructions: workerHost
+        ? '请在 Cloudflare DNS 中添加以上 CNAME 记录，然后在下方点击验证。'
+        : '请到 Worker → Settings → Domains & Routes 查看 xxx.workers.dev 地址，把它作为 CNAME 目标填入 DNS，然后点击验证。',
     },
   }, 201);
 });
@@ -140,10 +143,12 @@ domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
     });
     const data = (await resp.json()) as { Answer?: { data?: string }[] };
     if (data.Answer) {
-      const expected = (c.env.PAGES_DOMAIN || 'pages.dev').replace(/\.$/, '');
+      const expected = (c.env.PAGES_DOMAIN || '').trim().replace(/\.$/, '').toLowerCase();
       verified = data.Answer.some((a) => {
         const value = (a.data || '').toLowerCase();
-        return value.includes(expected.toLowerCase()) || value.includes('pages.dev');
+        // 未配置 PAGES_DOMAIN 时，只要存在 CNAME 记录即视为已验证
+        if (!expected) return true;
+        return value.includes(expected) || value.includes('workers.dev');
       });
     }
   } catch {

@@ -59,7 +59,8 @@ export default function Login() {
       setError('请填写邮箱和密码')
       return
     }
-    if (!turnstileToken) {
+    // 未配置 Turnstile 时不渲染组件，也不要求 token
+    if (siteKey && !turnstileToken) {
       setError('请完成人机验证')
       return
     }
