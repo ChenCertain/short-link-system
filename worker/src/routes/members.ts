@@ -143,7 +143,7 @@ members.get('/scope', async (c) => {
         require_review: !!row.require_review,
         review_by: row.review_by || 'auto',
         can_edit_permission: canConfigPermission && !sameLevelAdmin && (!isSelf || isSuperAdmin),
-        can_edit_role: canSetRole && !sameLevelAdmin && !isSelf,
+        can_edit_role: canSetRole && !sameLevelAdmin && (!isSelf || isSuperAdmin),
         can_remove: canRemoveMember && !sameLevelAdmin && (!isSelf || isSuperAdmin),
         // 审核方式是该用户的全局设置；普通用户不能改自己，同级管理员需上级处理
         can_config_review:

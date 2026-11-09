@@ -677,11 +677,13 @@ export default function Groups() {
                   <ul className="divide-y divide-gray-100 dark:divide-gray-800">
                     {detail.members.map((m) => {
                       const isSelf = m.id === user?.id
-                      // 组管理员不能移除其他管理员；超级管理员可以
-                      const canRemove = canRemoveMembers && !isSelf && (isSuperAdmin || m.group_role !== 'admin')
-                      // 同级组管理员不能互相改身份，需由上级管理员或超管处理
-                      const canEditRole = !isSelf && canSetMemberRole && (isSuperAdmin || m.group_role !== 'admin')
-                      const canEditPerm = !isSelf && canConfigMemberPerm
+                      // 超级管理员可以移除自己；组管理员不能移除自己、也不能移除其他管理员
+                      const canRemove =
+                        canRemoveMembers && (!isSelf || isSuperAdmin) && (isSuperAdmin || m.group_role !== 'admin')
+                      // 同级组管理员不能互相改身份，需由上级管理员或超管处理；超管可改自己的身份
+                      const canEditRole =
+                        canSetMemberRole && (!isSelf || isSuperAdmin) && (isSuperAdmin || m.group_role !== 'admin')
+                      const canEditPerm = canConfigMemberPerm && (!isSelf || isSuperAdmin)
                       const enabledPerms = Object.keys(m.permissions || {}).filter((k) => m.permissions?.[k]).length
                       return (
                         <li key={m.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
