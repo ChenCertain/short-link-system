@@ -34,6 +34,8 @@ import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 function flattenGroups(groups: ProjectGroup[], depth = 0): { id: number; label: string }[] {
   const result: { id: number; label: string }[] = []
   for (const g of groups) {
@@ -334,12 +336,17 @@ export default function Groups() {
   // 已在组内的成员 ID，用于从候选里排除
   const memberIds = useMemo(() => new Set((detail?.members || []).map((m) => m.id)), [detail])
 
-  // 超级管理员：本地搜索全部用户；组管理员：走后端搜索候选接口
+  // 超级管理员：本地搜索全部用户；组管理员：必须输入完整邮箱精确查找（不允许浏览用户列表）
   useEffect(() => {
     if (!memberOpen || isSuperAdmin || !selectedId) return
+    const kw = memberKeyword.trim()
+    if (!EMAIL_RE.test(kw)) {
+      setMemberCandidates([])
+      return
+    }
     const timer = setTimeout(() => {
       groupsApi
-        .memberCandidates(selectedId, memberKeyword.trim() || undefined)
+        .memberCandidates(selectedId, kw)
         .then((data) => setMemberCandidates(data.users))
         .catch(() => setMemberCandidates([]))
     }, 250)
@@ -730,12 +737,17 @@ export default function Groups() {
               <Input
                 id="m-search"
                 className="pl-9"
-                placeholder="输入姓名或邮箱搜索"
+                placeholder={isSuperAdmin ? '输入姓名或邮箱搜索' : '输入对方完整邮箱精确查找'}
                 value={memberKeyword}
                 onChange={(e) => setMemberKeyword(e.target.value)}
                 autoComplete="off"
               />
             </div>
+            {!isSuperAdmin && (
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                为保护用户隐私，你的账号无法浏览用户列表，请向对方索取完整邮箱后精确查找
+              </p>
+            )}
           </div>
           <div>
             <Label htmlFor="m-role">以什么身份添加</Label>
@@ -755,11 +767,22 @@ export default function Groups() {
             )}
           </div>
           <div>
-            <Label>可添加的成员{matchCount > 0 ? `（${matchCount}）` : ''}</Label>
+            <Label>
+              {isSuperAdmin ? '可添加的成员' : '查找结果'}
+              {matchCount > 0 ? `（${matchCount}）` : ''}
+            </Label>
             <div className="max-h-72 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
               {candidateList.length === 0 ? (
                 <p className="px-4 py-6 text-center text-xs text-gray-400">
-                  {memberKeyword.trim() ? '没有匹配的可添加成员' : '暂无可添加的成员'}
+                  {isSuperAdmin
+                    ? memberKeyword.trim()
+                      ? '没有匹配的可添加成员'
+                      : '暂无可添加的成员'
+                    : !memberKeyword.trim()
+                      ? '请输入对方完整邮箱进行查找'
+                      : !EMAIL_RE.test(memberKeyword.trim())
+                        ? '请输入完整邮箱，例如 name@example.com'
+                        : '未找到该邮箱对应的可添加用户'}
                 </p>
               ) : (
                 candidateList.map((u) => (

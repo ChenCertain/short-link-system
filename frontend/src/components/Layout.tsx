@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { LogoMark } from '@/components/Logo'
 import { cn, ROLE_LABELS } from '@/lib/utils'
 
 interface NavItem {
@@ -103,9 +104,7 @@ export default function Layout() {
       >
         <div className="flex h-16 items-center justify-between border-b border-gray-100 px-5 dark:border-gray-800">
           <Link to="/dashboard" className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-              SL
-            </span>
+            <LogoMark size={32} />
             短链管理
           </Link>
           <button

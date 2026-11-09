@@ -314,6 +314,25 @@ groups.get('/:id/member-candidates', async (c) => {
   }
 
   const keyword = (c.req.query('search') || '').trim();
+
+  // 项目组管理员不允许浏览全站用户：必须输入对方完整邮箱做精确匹配，且最多返回这一条。
+  // 这样既能完成「把某人加进组」，又杜绝枚举/浏览全部用户的越权行为。
+  if (!isSuperAdmin) {
+    if (!keyword || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(keyword)) {
+      return jsonResponse({ users: [], exact_email_required: true });
+    }
+
+    const row = await c.env.DB.prepare(
+      `SELECT u.id, u.name, u.email FROM users u
+       WHERE u.status = 'active'
+         AND u.email = ? COLLATE NOCASE
+         AND u.id NOT IN (SELECT user_id FROM user_group_relations WHERE group_id = ?)
+       LIMIT 1`
+    ).bind(keyword, groupId).first<{ id: number; name: string; email: string }>();
+
+    return jsonResponse({ users: row ? [row] : [], exact_email_required: true });
+  }
+
   const like = `%${keyword}%`;
 
   const rows = await c.env.DB.prepare(

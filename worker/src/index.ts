@@ -16,7 +16,6 @@ import stats from './routes/stats';
 import config from './routes/config';
 import audit from './routes/audit';
 import redirect from './routes/redirect';
-import publicRoutes from './routes/public';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -63,7 +62,6 @@ app.route('/api/links', links);
 app.route('/api/stats', stats);
 app.route('/api/config', config);
 app.route('/api/audit', audit);
-app.route('/api/public', publicRoutes);
 
 // ========== 短链跳转 ==========
 // 需要在静态资源之前处理

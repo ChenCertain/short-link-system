@@ -8,8 +8,6 @@ import {
   Plus,
   QrCode,
   Search,
-  Star,
-  StarOff,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -470,16 +468,6 @@ export default function Links() {
     }
   }
 
-  const handleToggleDisplay = async (link: ShortLink) => {
-    try {
-      await linksApi.toggleDisplay(link.id, link.is_displayed === 0)
-      show(link.is_displayed === 0 ? '已加入首页展示' : '已取消首页展示', 'success')
-      void loadLinks()
-    } catch (err) {
-      show((err as Error).message, 'error')
-    }
-  }
-
   const handleImport = async () => {
     const lines = importText
       .split('\n')
@@ -675,11 +663,6 @@ export default function Links() {
                           >
                             /{link.short_code}
                           </Link>
-                          {link.is_displayed === 1 && (
-                            <Badge tone="purple">
-                              <Star className="mr-0.5 h-3 w-3" /> 展示
-                            </Badge>
-                          )}
                         </div>
                         <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
                           {link.name || '（未命名）'}
@@ -737,15 +720,6 @@ export default function Links() {
                           >
                             <QrCode className="h-4 w-4" />
                           </button>
-                          {isSuperAdmin && (
-                            <button
-                              onClick={() => handleToggleDisplay(link)}
-                              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
-                              title={link.is_displayed ? '取消首页展示' : '加入首页展示'}
-                            >
-                              {link.is_displayed ? <StarOff className="h-4 w-4" /> : <Star className="h-4 w-4" />}
-                            </button>
-                          )}
                           {link.can_manage && (
                             <>
                               <button

@@ -734,19 +734,6 @@ links.delete('/:id', authMiddleware, async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 设置/取消首页展示 ==========
-links.post('/:id/display', authMiddleware, requireRole('super_admin'), async (c) => {
-  const linkId = parseInt(c.req.param('id'));
-  const body = await c.req.json<{ displayed: boolean; order?: number }>();
-
-  await c.env.DB.prepare(
-    'UPDATE short_links SET is_displayed = ?, display_order = ?, updated_at = ? WHERE id = ?'
-  ).bind(body.displayed ? 1 : 0, body.order || 0, Math.floor(Date.now() / 1000), linkId).run();
-
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'toggle_display', c.req.raw, 'link', linkId, JSON.stringify(body));
-
-  return jsonResponse({ success: true });
-});
 
 // ========== 批量导入（管理员） ==========
 links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c) => {

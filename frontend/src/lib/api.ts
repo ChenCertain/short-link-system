@@ -7,7 +7,6 @@ import type {
   LinkStats,
   OverviewStats,
   ProjectGroup,
-  PublicLink,
   ReviewLink,
   ShortLink,
   UserItem,
@@ -125,7 +124,6 @@ export const profileApi = {
 
 // ============ 公开 ============
 export const publicApi = {
-  homeLinks: () => get<{ site_name: string; links: PublicLink[] }>('/api/public/links'),
   config: () => get<{ site_name: string; turnstile_site_key: string }>('/api/config/public'),
 }
 
@@ -280,8 +278,6 @@ export const linksApi = {
     },
   ) => put<{ success: boolean; review_status?: string }>(`/api/links/${id}`, payload),
   remove: (id: number) => del<{ success: boolean }>(`/api/links/${id}`),
-  toggleDisplay: (id: number, displayed: boolean, order?: number) =>
-    post<{ success: boolean }>(`/api/links/${id}/display`, { displayed, order }),
   batchImport: (links: { target_url: string; name?: string; custom_alias?: string }[]) =>
     post<{ results: { success: boolean; short_code?: string; error?: string; target_url: string }[] }>(
       '/api/links/batch-import',

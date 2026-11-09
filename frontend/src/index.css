@@ -12,6 +12,20 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
+/* 首页 Hero 背景网格（顶部渐隐） */
+.hero-grid {
+  background-image: linear-gradient(to right, rgb(100 116 139 / 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(100 116 139 / 0.16) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 58% at 50% 0%, #000 30%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 58% at 50% 0%, #000 30%, transparent 100%);
+}
+
+.dark .hero-grid {
+  background-image: linear-gradient(to right, rgb(148 163 184 / 0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(148 163 184 / 0.14) 1px, transparent 1px);
+}
+
 /* Turnstile widget 居中 */
 .cf-turnstile {
   display: flex;

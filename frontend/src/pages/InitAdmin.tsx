@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/components/Toast'
 import { Button, Card, ErrorText, Input, Label } from '@/components/ui'
 import { Turnstile } from '@/components/Turnstile'
+import { Logo } from '@/components/Logo'
 
 export default function InitAdmin() {
   const navigate = useNavigate()
@@ -119,6 +120,10 @@ export default function InitAdmin() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 py-10 dark:from-gray-950 dark:to-gray-900">
       <div className="w-full max-w-md">
+        <div className="mb-6 flex justify-center">
+          <Logo size={44} text="短链管理" textClassName="text-lg" className="gap-2.5" />
+        </div>
+
         <Card className="p-6 sm:p-8">
           <div className="mb-6 text-center">
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">

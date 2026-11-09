@@ -68,8 +68,6 @@ export interface ShortLink {
   domain_id: number | null
   expires_at: number | null
   click_count: number
-  is_displayed: number
-  display_order: number
   created_at: number
   updated_at: number
   domain_name?: string | null
@@ -116,15 +114,6 @@ export interface GroupDetail {
   subGroups: { id: number; name: string; description: string | null }[]
   can_manage: boolean
   is_super_admin: boolean
-}
-
-export interface PublicLink {
-  id: number
-  name: string
-  status: string
-  click_count: number
-  created_at: number
-  short_url: string
 }
 
 export interface AccessRecord {

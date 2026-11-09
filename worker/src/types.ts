@@ -93,8 +93,6 @@ export interface ShortLink {
   domain_id: number | null;
   expires_at: number | null;
   click_count: number;
-  is_displayed: number;
-  display_order: number;
   review_status: 'approved' | 'pending' | 'rejected';
   review_note: string | null;
   reviewed_by: number | null;

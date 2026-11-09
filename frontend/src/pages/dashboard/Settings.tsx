@@ -87,14 +87,6 @@ export default function Settings() {
         </form>
       </Card>
 
-      <Card>
-        <CardHeader title="首页展示说明" description="首页展示的短链在「短链管理」中点击星标图标设置" />
-        <div className="space-y-2 p-5 text-sm text-gray-600 dark:text-gray-400">
-          <p>· 在短链列表中点击 ⭐ 可将短链加入或移出首页展示</p>
-          <p>· 首页展示内容包括：状态、链接、名称</p>
-          <p>· 未登录的访客也可以浏览首页展示的短链</p>
-        </div>
-      </Card>
     </div>
   )
 }
