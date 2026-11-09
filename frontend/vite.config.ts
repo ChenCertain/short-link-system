@@ -16,26 +16,8 @@ export default defineConfig({
     cssCodeSplit: true,
     // 构建速度：跳过 gzip 体积统计（CDN 会自动压缩）
     reportCompressedSize: false,
-    // 依赖按包拆分，命中浏览器长缓存，避免每次发版重复下载
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return
-          if (id.includes('recharts') || id.includes('d3-')) return 'charts'
-          if (id.includes('qrcode')) return 'qrcode'
-          if (id.includes('lucide-react')) return 'icons'
-          if (
-            id.includes('react/') ||
-            id.includes('react-dom') ||
-            id.includes('react-router') ||
-            id.includes('scheduler')
-          ) {
-            return 'react'
-          }
-          return 'vendor'
-        },
-      },
-    },
+    // 不使用自定义 manualChunks：强制拆包会造成 chunk 间的循环依赖，
+    // 导致运行时报错（页面白屏）。依赖由 Rollup 自动合并进按需加载的路由 chunk。
   },
   server: {
     port: 5173,

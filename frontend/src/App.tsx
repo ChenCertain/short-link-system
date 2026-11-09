@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ToastProvider } from '@/components/Toast'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import Layout from '@/components/Layout'
 import Home from '@/pages/Home'
 
@@ -32,88 +33,90 @@ function PageLoading() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <Suspense fallback={<PageLoading />}>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/init" element={<InitAdmin />} />
+    <ErrorBoundary>
+      <AuthProvider>
+        <ToastProvider>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/init" element={<InitAdmin />} />
 
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Layout />
-                </ProtectedRoute>
-              }
-            >
               <Route
-                index
+                path="/dashboard"
                 element={
-                  <ProtectedRoute roles={['super_admin']}>
-                    <Overview />
+                  <ProtectedRoute>
+                    <Layout />
                   </ProtectedRoute>
                 }
-              />
-              <Route path="links" element={<Links />} />
-              <Route path="links/:id" element={<LinkDetail />} />
-              <Route path="groups" element={<Groups />} />
-              <Route
-                path="review"
-                element={
-                  <ProtectedRoute groupAdmin>
-                    <Review />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="stats"
-                element={
-                  <ProtectedRoute roles={['super_admin']}>
-                    <Analytics />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="users"
-                element={
-                  <ProtectedRoute roles={['super_admin']}>
-                    <Users />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="audit"
-                element={
-                  <ProtectedRoute roles={['super_admin']}>
-                    <Audit />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="domains"
-                element={
-                  <ProtectedRoute roles={['super_admin']}>
-                    <Domains />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="settings"
-                element={
-                  <ProtectedRoute roles={['super_admin']}>
-                    <Settings />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="profile" element={<Profile />} />
-            </Route>
+              >
+                <Route
+                  index
+                  element={
+                    <ProtectedRoute roles={['super_admin']}>
+                      <Overview />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="links" element={<Links />} />
+                <Route path="links/:id" element={<LinkDetail />} />
+                <Route path="groups" element={<Groups />} />
+                <Route
+                  path="review"
+                  element={
+                    <ProtectedRoute groupAdmin>
+                      <Review />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="stats"
+                  element={
+                    <ProtectedRoute roles={['super_admin']}>
+                      <Analytics />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="users"
+                  element={
+                    <ProtectedRoute roles={['super_admin']}>
+                      <Users />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="audit"
+                  element={
+                    <ProtectedRoute roles={['super_admin']}>
+                      <Audit />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="domains"
+                  element={
+                    <ProtectedRoute roles={['super_admin']}>
+                      <Domains />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="settings"
+                  element={
+                    <ProtectedRoute roles={['super_admin']}>
+                      <Settings />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="profile" element={<Profile />} />
+              </Route>
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </ToastProvider>
-    </AuthProvider>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </ToastProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   )
 }

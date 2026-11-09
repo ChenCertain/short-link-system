@@ -23,8 +23,9 @@ export default function Home() {
     publicApi
       .homeLinks()
       .then((data) => {
-        setSiteName(data.site_name)
-        setLinks(data.links)
+        if (data?.site_name) setSiteName(data.site_name)
+        // 兜底：接口返回结构异常时也不让页面崩溃
+        setLinks(Array.isArray(data?.links) ? data.links : [])
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false))
