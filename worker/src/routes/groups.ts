@@ -371,6 +371,53 @@ groups.post('/:id/members', async (c) => {
   return jsonResponse({ success: true });
 });
 
+// ========== 修改成员组内身份（仅超级管理员） ==========
+groups.put('/:id/members/:userId', async (c) => {
+  const groupId = parseInt(c.req.param('id'));
+  const userId = parseInt(c.req.param('userId'));
+  if (!Number.isFinite(groupId) || !Number.isFinite(userId)) {
+    return jsonResponse({ error: '无效的 ID' }, 400);
+  }
+
+  const currentUser = c.get('user');
+  if (currentUser.role !== 'super_admin') {
+    return jsonResponse({ error: '权限不足，成员身份需由超级管理员调整' }, 403);
+  }
+
+  const body = await c.req.json<{ role?: 'admin' | 'member' }>();
+  if (body.role !== 'admin' && body.role !== 'member') {
+    return jsonResponse({ error: '身份只能是 admin 或 member' }, 400);
+  }
+
+  const target = await c.env.DB.prepare(
+    'SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?'
+  ).bind(userId, groupId).first<{ role: string }>();
+  if (!target) {
+    return jsonResponse({ error: '该用户不在项目组中' }, 404);
+  }
+
+  if (target.role === body.role) {
+    return jsonResponse({ success: true });
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE user_group_relations SET role = ? WHERE user_id = ? AND group_id = ?'
+  ).bind(body.role, userId, groupId).run();
+
+  await logAudit(
+    c.env.DB,
+    c.env.KV,
+    currentUser.user_id,
+    'update_group_member_role',
+    c.req.raw,
+    'group',
+    groupId,
+    JSON.stringify({ user_id: userId, from: target.role, to: body.role }),
+  );
+
+  return jsonResponse({ success: true });
+});
+
 // ========== 移除成员（超级管理员或该项目组管理员） ==========
 groups.delete('/:id/members/:userId', async (c) => {
   const groupId = parseInt(c.req.param('id'));

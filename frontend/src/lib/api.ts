@@ -181,6 +181,8 @@ export const groupsApi = {
     ),
   addMember: (id: number, payload: { user_id: number; role?: 'admin' | 'member' }) =>
     post<{ success: boolean }>(`/api/groups/${id}/members`, payload),
+  updateMemberRole: (id: number, userId: number, role: 'admin' | 'member') =>
+    put<{ success: boolean }>(`/api/groups/${id}/members/${userId}`, { role }),
   removeMember: (id: number, userId: number) =>
     del<{ success: boolean }>(`/api/groups/${id}/members/${userId}`),
   bindDomain: (id: number, domainId: number) =>

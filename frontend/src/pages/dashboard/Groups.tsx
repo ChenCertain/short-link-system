@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, FolderPlus, Globe, Link2, Plus, Trash2, UserPlus, X } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  Globe,
+  Link2,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  UserPlus,
+  X,
+} from 'lucide-react'
 import { domainsApi, groupsApi, usersApi } from '@/lib/api'
 import type { Domain, GroupDetail, ProjectGroup, UserItem } from '@/lib/types'
 import {
@@ -114,9 +126,14 @@ export default function Groups() {
   const [removeLoading, setRemoveLoading] = useState(false)
 
   const [memberOpen, setMemberOpen] = useState(false)
-  const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' as 'member' | 'admin' })
-  const [addingMember, setAddingMember] = useState(false)
+  const [memberRole, setMemberRole] = useState<'member' | 'admin'>('member')
+  const [memberKeyword, setMemberKeyword] = useState('')
+  const [addingUserId, setAddingUserId] = useState<number | null>(null)
   const [memberCandidates, setMemberCandidates] = useState<{ id: number; name: string; email: string }[]>([])
+
+  // 编辑成员身份
+  const [editingMember, setEditingMember] = useState<{ id: number; name: string; role: 'admin' | 'member' } | null>(null)
+  const [savingRole, setSavingRole] = useState(false)
 
   const [domainOpen, setDomainOpen] = useState(false)
   const [domainId, setDomainId] = useState('')
@@ -218,27 +235,42 @@ export default function Groups() {
     }
   }
 
-  const handleAddMember = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedId || !memberForm.user_id) {
-      show('请选择用户', 'error')
-      return
-    }
-    setAddingMember(true)
+  // 搜索到成员后一键直接添加（弹窗保持打开，方便连续添加）
+  const handleQuickAddMember = async (target: { id: number; name: string; email: string }) => {
+    if (!selectedId) return
+    const role: 'admin' | 'member' = isSuperAdmin ? memberRole : 'member'
+    setAddingUserId(target.id)
     try {
-      await groupsApi.addMember(selectedId, {
-        user_id: Number(memberForm.user_id),
-        role: memberForm.role,
-      })
-      show('成员已添加', 'success')
-      setMemberOpen(false)
-      setMemberForm({ user_id: '', role: 'member' })
+      await groupsApi.addMember(selectedId, { user_id: target.id, role })
+      show(`已将 ${target.name} 添加为${role === 'admin' ? '组管理员' : '成员'}`, 'success')
+      if (!isSuperAdmin) setMemberCandidates((prev) => prev.filter((u) => u.id !== target.id))
       await loadDetail(selectedId)
       await loadGroups()
     } catch (err) {
       show((err as Error).message, 'error')
     } finally {
-      setAddingMember(false)
+      setAddingUserId(null)
+    }
+  }
+
+  // 快捷修改成员在组内的身份（成员 / 组管理员）
+  const handleUpdateMemberRole = async () => {
+    if (!selectedId || !editingMember) return
+    if (editingMember.role === editingMember.role) {
+      setEditingMember(null)
+      return
+    }
+    setSavingRole(true)
+    try {
+      await groupsApi.updateMemberRole(selectedId, editingMember.id, editingMember.role)
+      show(`${editingMember.name} 已设为${editingMember.role === 'admin' ? '组管理员' : '成员'}`, 'success')
+      setEditingMember(null)
+      await loadDetail(selectedId)
+      await loadGroups()
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setSavingRole(false)
     }
   }
 
@@ -294,15 +326,36 @@ export default function Groups() {
   const canManageMembers = canManageSelected
 
   const openMemberModal = () => {
-    setMemberForm({ user_id: '', role: 'member' })
+    setMemberRole('member')
+    setMemberKeyword('')
     setMemberOpen(true)
-    if (!isSuperAdmin && selectedId) {
+  }
+
+  // 已在组内的成员 ID，用于从候选里排除
+  const memberIds = useMemo(() => new Set((detail?.members || []).map((m) => m.id)), [detail])
+
+  // 超级管理员：本地搜索全部用户；组管理员：走后端搜索候选接口
+  useEffect(() => {
+    if (!memberOpen || isSuperAdmin || !selectedId) return
+    const timer = setTimeout(() => {
       groupsApi
-        .memberCandidates(selectedId)
+        .memberCandidates(selectedId, memberKeyword.trim() || undefined)
         .then((data) => setMemberCandidates(data.users))
         .catch(() => setMemberCandidates([]))
-    }
-  }
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [memberOpen, isSuperAdmin, selectedId, memberKeyword])
+
+  const matchedUsers = useMemo(() => {
+    if (!isSuperAdmin) return memberCandidates
+    const kw = memberKeyword.trim().toLowerCase()
+    return allUsers
+      .filter((u) => !memberIds.has(u.id) && u.status === 'active')
+      .filter((u) => !kw || u.name.toLowerCase().includes(kw) || u.email.toLowerCase().includes(kw))
+  }, [isSuperAdmin, memberCandidates, allUsers, memberIds, memberKeyword])
+
+  const candidateList = isSuperAdmin ? matchedUsers.slice(0, 30) : matchedUsers
+  const matchCount = matchedUsers.length
 
   const boundDomainIds = new Set((detail?.domains || []).map((d) => d.id))
   const availableDomains = allDomains.filter(
@@ -503,6 +556,17 @@ export default function Groups() {
                             {m.group_role === 'admin' ? '组管理员' : '成员'}
                           </Badge>
                           <StatusBadge status={m.status} />
+                          {isSuperAdmin && (
+                            <button
+                              onClick={() =>
+                                setEditingMember({ id: m.id, name: m.name, role: m.group_role })
+                              }
+                              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                              title="编辑成员身份"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          )}
                           {canRemove && (
                             <button
                               onClick={() => setRemovingMember({ id: m.id, name: m.name })}
@@ -653,42 +717,33 @@ export default function Groups() {
         onClose={() => setMemberOpen(false)}
         title="添加成员"
         footer={
-          <>
-            <Button variant="outline" onClick={() => setMemberOpen(false)}>
-              取消
-            </Button>
-            <Button onClick={handleAddMember} loading={addingMember}>
-              添加
-            </Button>
-          </>
+          <Button variant="outline" onClick={() => setMemberOpen(false)}>
+            关闭
+          </Button>
         }
       >
-        <form onSubmit={handleAddMember} className="space-y-4">
+        <div className="space-y-4">
           <div>
-            <Label htmlFor="m-user">选择用户</Label>
-            <Select
-              id="m-user"
-              value={memberForm.user_id}
-              onChange={(e) => setMemberForm({ ...memberForm, user_id: e.target.value })}
-            >
-              <option value="">请选择用户</option>
-              {(isSuperAdmin ? allUsers : memberCandidates).map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}（{u.email}）
-                </option>
-              ))}
-            </Select>
-            {!isSuperAdmin && memberCandidates.length === 0 && (
-              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">暂无可添加的用户</p>
-            )}
+            <Label htmlFor="m-search">搜索成员</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input
+                id="m-search"
+                className="pl-9"
+                placeholder="输入姓名或邮箱搜索"
+                value={memberKeyword}
+                onChange={(e) => setMemberKeyword(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
           </div>
           <div>
-            <Label htmlFor="m-role">组内角色</Label>
+            <Label htmlFor="m-role">以什么身份添加</Label>
             <Select
               id="m-role"
-              value={memberForm.role}
+              value={memberRole}
               disabled={!isSuperAdmin}
-              onChange={(e) => setMemberForm({ ...memberForm, role: e.target.value as 'member' | 'admin' })}
+              onChange={(e) => setMemberRole(e.target.value as 'member' | 'admin')}
             >
               <option value="member">成员（可查看组内短链）</option>
               <option value="admin">组管理员（可审核短链、管理组内成员）</option>
@@ -699,7 +754,76 @@ export default function Groups() {
               </p>
             )}
           </div>
-        </form>
+          <div>
+            <Label>可添加的成员{matchCount > 0 ? `（${matchCount}）` : ''}</Label>
+            <div className="max-h-72 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+              {candidateList.length === 0 ? (
+                <p className="px-4 py-6 text-center text-xs text-gray-400">
+                  {memberKeyword.trim() ? '没有匹配的可添加成员' : '暂无可添加的成员'}
+                </p>
+              ) : (
+                candidateList.map((u) => (
+                  <div key={u.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{u.name}</p>
+                      <p className="truncate text-xs text-gray-500 dark:text-gray-400">{u.email}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={addingUserId === u.id}
+                      disabled={addingUserId !== null && addingUserId !== u.id}
+                      onClick={() => void handleQuickAddMember(u)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      添加
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+              点击「添加」即可直接加入项目组，弹窗会保持打开，方便连续添加
+            </p>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 编辑成员身份（仅超管） */}
+      <Modal
+        open={!!editingMember}
+        onClose={() => setEditingMember(null)}
+        title="编辑成员身份"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setEditingMember(null)}>
+              取消
+            </Button>
+            <Button onClick={handleUpdateMemberRole} loading={savingRole}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-gray-50 px-4 py-3 dark:bg-gray-800/60">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{editingMember?.name}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">调整该用户在当前项目组内的身份</p>
+          </div>
+          <div>
+            <Label htmlFor="m-edit-role">组内身份</Label>
+            <Select
+              id="m-edit-role"
+              value={editingMember?.role ?? 'member'}
+              onChange={(e) =>
+                setEditingMember((prev) => (prev ? { ...prev, role: e.target.value as 'admin' | 'member' } : prev))
+              }
+            >
+              <option value="member">成员（可查看组内短链）</option>
+              <option value="admin">组管理员（可审核短链、管理组内成员）</option>
+            </Select>
+          </div>
+        </div>
       </Modal>
 
       {/* 绑定域名（仅超管） */}
