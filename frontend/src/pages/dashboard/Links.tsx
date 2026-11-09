@@ -29,9 +29,17 @@ import {
 } from '@/components/ui'
 import { QRCodeModal } from '@/components/QRCodeModal'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import {
+  EditLinkModal,
+  ExpiryField,
+  URL_PROTOCOLS,
+  flattenGroups,
+  splitProtocol,
+  withProtocol,
+} from '@/components/EditLinkModal'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { cn, copyText, formatDateTime, localInputToTimestamp, timestampToLocalInput } from '@/lib/utils'
+import { copyText, formatDateTime, localInputToTimestamp } from '@/lib/utils'
 
 interface LinkForm {
   target_url: string
@@ -55,102 +63,9 @@ const emptyForm: LinkForm = {
   redirect_type: '302',
 }
 
-// 目标链接协议：默认 https，可切换为 http
-const URL_PROTOCOLS = ['https', 'http'] as const
-
-function splitProtocol(url: string): { protocol: string; rest: string } {
-  const trimmed = (url || '').trim()
-  const matched = /^([a-z][a-z0-9+.-]*):\/\//i.exec(trimmed)
-  if (matched) {
-    return { protocol: matched[1].toLowerCase(), rest: trimmed.slice(matched[0].length) }
-  }
-  return { protocol: 'https', rest: trimmed }
-}
-
-function withProtocol(protocol: string, rest: string): string {
-  return `${protocol}://${rest.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')}`
-}
-
 function absoluteUrl(link: ShortLink) {
   const path = link.domain_name ? `https://${link.domain_name}/${link.short_code}` : `/${link.short_code}`
   return path.startsWith('/') ? `${window.location.origin}${path}` : path
-}
-
-function defaultExpiryInput() {
-  const d = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-  d.setSeconds(0, 0)
-  return timestampToLocalInput(Math.floor(d.getTime() / 1000))
-}
-
-/** 过期时间选择：长期有效 / 自定义时间 分段切换，避免按钮与右侧控件重叠 */
-function ExpiryField({
-  id,
-  value,
-  onChange,
-}: {
-  id: string
-  value: string
-  onChange: (value: string) => void
-}) {
-  const permanent = !value
-  const tabClass = (active: boolean) =>
-    cn(
-      'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-      active
-        ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100'
-        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200',
-    )
-
-  return (
-    <div className="min-w-0">
-      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <Label htmlFor={id} className="mb-0">
-          过期时间
-        </Label>
-        <div className="inline-flex shrink-0 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800">
-          <button type="button" onClick={() => onChange('')} className={tabClass(permanent)}>
-            长期有效
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!value) onChange(defaultExpiryInput())
-            }}
-            className={tabClass(!permanent)}
-          >
-            自定义
-          </button>
-        </div>
-      </div>
-      {permanent ? (
-        <div className="flex h-10 items-center rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
-          不会自动过期
-        </div>
-      ) : (
-        <Input
-          id={id}
-          type="datetime-local"
-          value={value}
-          min={timestampToLocalInput(Math.floor(Date.now() / 1000))}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      )}
-      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        {permanent ? '当前设置为长期有效，不会自动过期' : '到期后短链自动失效'}
-      </p>
-    </div>
-  )
-}
-
-function flattenGroups(groups: ProjectGroup[], depth = 0): { id: number; label: string }[] {
-  const result: { id: number; label: string }[] = []
-  for (const g of groups) {
-    result.push({ id: g.id, label: `${'　'.repeat(depth)}${g.name}` })
-    if (g.children && g.children.length > 0) {
-      result.push(...flattenGroups(g.children, depth + 1))
-    }
-  }
-  return result
 }
 
 export default function Links() {
@@ -187,14 +102,8 @@ export default function Links() {
   const [createError, setCreateError] = useState('')
   const [createdUrl, setCreatedUrl] = useState('')
 
+  // 编辑弹窗状态由 EditLinkModal 内部维护，这里只记录当前编辑的短链
   const [editing, setEditing] = useState<ShortLink | null>(null)
-  const [editForm, setEditForm] = useState<LinkForm>(emptyForm)
-  const [editDomains, setEditDomains] = useState<{ id: number; domain: string; is_default_short_link: number }[]>([])
-  const [editDomainsLoading, setEditDomainsLoading] = useState(false)
-  const [editProtocol, setEditProtocol] = useState<string>('https')
-  const [editClearPassword, setEditClearPassword] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [editError, setEditError] = useState('')
 
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
@@ -347,100 +256,8 @@ export default function Links() {
     }
   }
 
-  const openEdit = (link: ShortLink) => {
-    setEditing(link)
-    setEditError('')
-    setEditClearPassword(false)
-    setEditProtocol(splitProtocol(link.target_url).protocol)
-    setEditForm({
-      target_url: link.target_url,
-      name: link.name || '',
-      custom_alias: link.short_code,
-      domain_id: link.domain_id ? String(link.domain_id) : '',
-      group_id: link.group_id ? String(link.group_id) : '',
-      password: '',
-      expires_at: timestampToLocalInput(link.expires_at),
-      redirect_type: String(link.redirect_type),
-    })
-
-    // 只加载当前用户有权限使用的域名
-    setEditDomains([])
-    setEditDomainsLoading(true)
-    const request = link.group_id
-      ? groupsApi.availableDomains(link.group_id)
-      : domainsApi.shortLinkDomains()
-    request
-      .then((data) => setEditDomains(data.domains))
-      .catch(() => setEditDomains([]))
-      .finally(() => setEditDomainsLoading(false))
-  }
-
-  const handleSaveEdit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!editing) return
-    setEditError('')
-
-    const aliasInput = editForm.custom_alias.trim()
-    if (!aliasInput) {
-      setEditError('自定义别名不能为空')
-      return
-    }
-    if (aliasInput.length > 64) {
-      setEditError('自定义别名最长 64 个字符')
-      return
-    }
-    if (!/^[\p{L}\p{N}_-]+$/u.test(aliasInput)) {
-      setEditError('自定义别名只能包含中文、字母、数字、下划线和短横线')
-      return
-    }
-    if (['login', 'init', 'dashboard', 'api', 'assets', 'cdn-cgi'].includes(aliasInput.toLowerCase())) {
-      setEditError('该别名是系统保留路径，请更换')
-      return
-    }
-
-    if (!splitProtocol(editForm.target_url).rest.trim()) {
-      setEditError('请填写目标链接')
-      return
-    }
-
-    setSaving(true)
-    try {
-      const originalDomainId = editing.domain_id ? String(editing.domain_id) : ''
-      const payload: Parameters<typeof linksApi.update>[1] = {
-        target_url: editForm.target_url,
-        name: editForm.name,
-        short_code: aliasInput,
-        group_id: editForm.group_id ? Number(editForm.group_id) : null,
-        expires_at: localInputToTimestamp(editForm.expires_at),
-        redirect_type: Number(editForm.redirect_type),
-      }
-
-      // 仅当用户主动修改域名时才提交，避免无权限域名影响保存
-      if (editForm.domain_id !== originalDomainId) {
-        payload.domain_id = editForm.domain_id ? Number(editForm.domain_id) : null
-      }
-      // 密码留空表示不修改；勾选清除才置空
-      if (editForm.password) {
-        payload.password = editForm.password
-      } else if (editClearPassword) {
-        payload.password = ''
-      }
-
-      const result = await linksApi.update(editing.id, payload)
-      if (result.review_status === 'pending') {
-        show('已保存修改，并重新提交审核', 'info')
-      } else {
-        show('已保存修改', 'success')
-      }
-      setEditing(null)
-      void loadLinks()
-      void loadFilterOptions()
-    } catch (err) {
-      setEditError((err as Error).message)
-    } finally {
-      setSaving(false)
-    }
-  }
+  // 编辑弹窗内部自己维护表单状态与域名列表
+  const openEdit = (link: ShortLink) => setEditing(link)
 
   const handleToggleStatus = async (link: ShortLink) => {
     try {
@@ -540,7 +357,7 @@ export default function Links() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
               className="pl-9"
-              placeholder="搜索短码、目标链接或名称"
+              placeholder="搜索短码、名称、目标链接、创建人或域名"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value)
@@ -982,172 +799,17 @@ export default function Links() {
         </form>
       </Modal>
 
-      {/* 编辑短链 */}
-      <Modal
-        open={!!editing}
-        onClose={() => setEditing(null)}
-        title="编辑短链"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setEditing(null)}>
-              取消
-            </Button>
-            <Button onClick={handleSaveEdit} loading={saving}>
-              保存
-            </Button>
-          </>
-        }
-      >
-        <form onSubmit={handleSaveEdit} className="space-y-4">
-          {editing?.review_status === 'rejected' && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300">
-              <p className="font-medium">该短链未通过审核，暂不可访问</p>
-              {editing.review_note && <p className="mt-0.5 text-xs">驳回原因：{editing.review_note}</p>}
-              <p className="mt-1 text-xs">修改并保存后将自动重新提交审核；也可以直接删除该短链。</p>
-            </div>
-          )}
-          <div>
-            <Label htmlFor="edit-code">自定义别名（短码）</Label>
-            <Input
-              id="edit-code"
-              maxLength={64}
-              value={editForm.custom_alias}
-              onChange={(e) => setEditForm({ ...editForm, custom_alias: e.target.value })}
-            />
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              1-64 个字符，支持中文、字母、数字、下划线和短横线；修改后旧链接立即失效
-            </p>
-          </div>
-          <div>
-            <Label htmlFor="edit-target">目标链接</Label>
-            <div className="flex gap-2">
-              <Select
-                aria-label="协议"
-                className="w-24 shrink-0"
-                value={editProtocol}
-                onChange={(e) => {
-                  const protocol = e.target.value
-                  setEditProtocol(protocol)
-                  setEditForm({
-                    ...editForm,
-                    target_url: withProtocol(protocol, splitProtocol(editForm.target_url).rest),
-                  })
-                }}
-              >
-                {URL_PROTOCOLS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}://
-                  </option>
-                ))}
-              </Select>
-              <Input
-                id="edit-target"
-                className="flex-1"
-                value={splitProtocol(editForm.target_url).rest}
-                onChange={(e) =>
-                  setEditForm({ ...editForm, target_url: withProtocol(editProtocol, e.target.value) })
-                }
-              />
-            </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <Label htmlFor="edit-name">名称</Label>
-              <Input
-                id="edit-name"
-                value={editForm.name}
-                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="edit-group">所属项目组</Label>
-              <Select
-                id="edit-group"
-                value={editForm.group_id}
-                onChange={(e) => setEditForm({ ...editForm, group_id: e.target.value })}
-              >
-                <option value="">不归属项目组</option>
-                {groupOptions.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.label}
-                  </option>
-                ))}
-              </Select>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                切换项目组后，若原域名不属于新项目组，将自动改用该组默认域名
-              </p>
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="edit-domain">短链域名</Label>
-            {editDomainsLoading ? (
-              <div className="flex h-10 items-center rounded-lg border border-gray-200 px-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                域名加载中...
-              </div>
-            ) : editDomains.length === 0 ? (
-              <div className="flex h-10 items-center rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
-                暂无可用域名
-              </div>
-            ) : (
-              <Select
-                id="edit-domain"
-                value={editForm.domain_id}
-                onChange={(e) => setEditForm({ ...editForm, domain_id: e.target.value })}
-              >
-                <option value="">不指定域名</option>
-                {editDomains.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.domain}
-                    {d.is_default_short_link ? '（默认）' : ''}
-                  </option>
-                ))}
-              </Select>
-            )}
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              只能选择当前用户有权限使用的域名，修改后短链地址会随之变化
-            </p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <ExpiryField
-              id="edit-expires"
-              value={editForm.expires_at}
-              onChange={(value) => setEditForm({ ...editForm, expires_at: value })}
-            />
-            <div className="min-w-0">
-              <Label htmlFor="edit-redirect">跳转类型</Label>
-              <Select
-                id="edit-redirect"
-                value={editForm.redirect_type}
-                onChange={(e) => setEditForm({ ...editForm, redirect_type: e.target.value })}
-              >
-                <option value="302">302 临时跳转</option>
-                <option value="301">301 永久跳转</option>
-              </Select>
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="edit-pwd">访问密码（留空表示不修改）</Label>
-            <Input
-              id="edit-pwd"
-              type="password"
-              placeholder="留空则保持原密码不变"
-              value={editForm.password}
-              onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-            />
-            <label className="mt-2 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 rounded border-gray-300"
-                checked={editClearPassword}
-                onChange={(e) => setEditClearPassword(e.target.checked)}
-              />
-              清除访问密码（取消密码保护）
-            </label>
-          </div>
 
-          {editError && <ErrorText>{editError}</ErrorText>}
-        </form>
-      </Modal>
+      {/* 编辑短链 */}
+      <EditLinkModal
+        link={editing}
+        groups={groups}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          void loadLinks()
+          void loadFilterOptions()
+        }}
+      />
 
       {/* 批量导入 */}
       <Modal

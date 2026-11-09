@@ -76,6 +76,53 @@ export async function getVisibleGroupIds(db: D1Database, userId: number): Promis
   return expandGroupIdsWithDescendants(db, [...roots]);
 }
 
+/** 用户管理范围内的项目组：担任管理员的组 + 全部子组 */
+export async function getManagedScopeIds(db: D1Database, userId: number): Promise<number[]> {
+  const managed = await getManagedGroupIds(db, userId);
+  return expandGroupIdsWithDescendants(db, managed);
+}
+
+/** 用户管理范围内已经绑定的短链域名 id（父组已有的域名，子组管理员可继续授权给子组） */
+export async function getManageableDomainIds(db: D1Database, userId: number): Promise<number[]> {
+  const groupIds = await getManagedScopeIds(db, userId);
+  if (groupIds.length === 0) return [];
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT domain_id FROM group_domain_relations
+       WHERE group_id IN (${groupIds.map(() => '?').join(',')})`,
+    )
+    .bind(...groupIds)
+    .all<{ domain_id: number }>();
+  return rows.results.map((r) => r.domain_id);
+}
+
+/** 读取项目组的父组 id */
+export async function getParentId(db: D1Database, groupId: number): Promise<number | null> {
+  const group = await db
+    .prepare('SELECT parent_id FROM project_groups WHERE id = ?')
+    .bind(groupId)
+    .first<{ parent_id: number | null }>();
+  return group?.parent_id ?? null;
+}
+
+/** 域名是否绑定在某个严格祖先组上（继承来的域名不应由子组管理员直接解绑） */
+export async function isDomainBoundToAncestor(
+  db: D1Database,
+  groupId: number,
+  domainId: number,
+): Promise<boolean> {
+  let current = await getParentId(db, groupId);
+  for (let i = 0; i < 20 && current; i++) {
+    const bound = await db
+      .prepare('SELECT id FROM group_domain_relations WHERE group_id = ? AND domain_id = ?')
+      .bind(current, domainId)
+      .first();
+    if (bound) return true;
+    current = await getParentId(db, current);
+  }
+  return false;
+}
+
 /**
  * 用户是否能查看某个项目组：超级管理员、该组成员，
  * 或任一祖先组的成员 / 管理员（父组可见子组）

@@ -1,16 +1,23 @@
 // 项目组路由（支持子组、域名分配、成员管理）
 //
 // 权限约定：
-// - 超级管理员：可创建/修改/删除项目组、添加成员、绑定域名
-// - 项目组管理员（user_group_relations.role = 'admin'）：可查看组内域名/成员/短链，
-//   可移除组内普通成员、审核组内短链；不能添加成员、不能绑定域名、不能创建/删除项目组
+// - 超级管理员：可创建/修改/删除任意项目组、添加成员、绑定域名
+// - 项目组管理员（user_group_relations.role = 'admin'）：可在自己管理的组下创建子组，
+//   可为子组绑定「自己管理范围内已绑定」的域名（父组已有的域名），
+//   可查看组内域名/成员/短链，可移除组内普通成员、审核组内短链；
+//   不能创建顶级项目组、不能授予管理员身份、不能解绑继承自父组的域名
 // - 普通成员：可查看自己所在项目组的信息与短链
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
-import { isGroupAdminOf, isGroupVisibleToUser } from '../permissions';
+import {
+  isGroupAdminOf,
+  isGroupVisibleToUser,
+  getManageableDomainIds,
+  isDomainBoundToAncestor,
+} from '../permissions';
 
 const groups = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
@@ -161,10 +168,12 @@ groups.get('/:id', async (c) => {
      ORDER BY d.is_default_short_link DESC, d.id ASC`
   ).bind(groupId).all();
 
-  // 项目组内的短链
+  // 项目组内的短链（返回编辑所需字段，并标记当前用户是否可操作）
   const links = await c.env.DB.prepare(
-    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.review_status,
-      sl.click_count, sl.created_at, sl.expires_at, d.domain as domain_name,
+    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.custom_alias, sl.status,
+      sl.redirect_type, sl.created_by, sl.group_id, sl.domain_id, sl.expires_at,
+      sl.click_count, sl.created_at, sl.updated_at, sl.review_status, sl.review_note,
+      sl.review_group_id, d.domain as domain_name,
       u.name as creator_name, u.email as creator_email
      FROM short_links sl
      LEFT JOIN domains d ON sl.domain_id = d.id
@@ -172,7 +181,7 @@ groups.get('/:id', async (c) => {
      WHERE sl.group_id = ?
      ORDER BY sl.created_at DESC
      LIMIT 200`
-  ).bind(groupId).all();
+  ).bind(groupId).all<{ created_by: number }>();
 
   // 子组：父组级（成员或管理员）都可查看全部子组
   const subGroups = await c.env.DB.prepare(
@@ -183,7 +192,10 @@ groups.get('/:id', async (c) => {
     group,
     members: members.results,
     domains: domains.results,
-    links: links.results,
+    links: links.results.map((row) => ({
+      ...row,
+      can_manage: canManage || row.created_by === currentUser.user_id,
+    })),
     subGroups: subGroups.results,
     can_manage: canManage,
     is_super_admin: isSuperAdmin,
@@ -222,9 +234,56 @@ groups.get('/:id/available-domains', async (c) => {
   return jsonResponse({ domains: domains.results });
 });
 
-// ========== 创建项目组（仅超级管理员） ==========
-groups.post('/', requireRole('super_admin'), async (c) => {
+// ========== 可绑定到该组的域名（超管：全部短链域名；组管理员：自己管理范围内已绑定的域名） ==========
+groups.get('/:id/bindable-domains', async (c) => {
+  const groupId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组 ID' }, 400);
   const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  const group = await c.env.DB.prepare('SELECT id FROM project_groups WHERE id = ?').bind(groupId).first();
+  if (!group) {
+    return jsonResponse({ error: '项目组不存在' }, 404);
+  }
+
+  if (!isSuperAdmin && !(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+    return jsonResponse({ error: '权限不足，只有项目组管理员可以绑定域名' }, 403);
+  }
+
+  // 已绑定到该组的域名不再返回
+  const notBoundHere = 'd.id NOT IN (SELECT domain_id FROM group_domain_relations WHERE group_id = ?)';
+
+  if (isSuperAdmin) {
+    const rows = await c.env.DB.prepare(
+      `SELECT d.id, d.domain, d.status FROM domains d
+       WHERE d.type IN ('short_link', 'both') AND ${notBoundHere}
+       ORDER BY CASE WHEN d.status = 'active' THEN 0 ELSE 1 END, d.domain ASC`,
+    ).bind(groupId).all();
+
+    return jsonResponse({ domains: rows.results });
+  }
+
+  // 组管理员只能复用「自己管理范围内已经绑定过」的域名（父组已有的域名）
+  const allowedIds = await getManageableDomainIds(c.env.DB, currentUser.user_id);
+  if (allowedIds.length === 0) {
+    return jsonResponse({ domains: [] });
+  }
+
+  const placeholders = allowedIds.map(() => '?').join(',');
+  const rows = await c.env.DB.prepare(
+    `SELECT d.id, d.domain, d.status FROM domains d
+     WHERE d.id IN (${placeholders}) AND d.type IN ('short_link', 'both') AND d.status = 'active'
+       AND ${notBoundHere}
+     ORDER BY d.domain ASC`,
+  ).bind(...allowedIds, groupId).all();
+
+  return jsonResponse({ domains: rows.results });
+});
+
+// ========== 创建项目组（超级管理员可建顶级组，项目组管理员仅可在自己管理的组下建子组） ==========
+groups.post('/', async (c) => {
+  const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
   const body = await c.req.json<{
     name: string;
     description?: string;
@@ -239,6 +298,16 @@ groups.post('/', requireRole('super_admin'), async (c) => {
     const parent = await c.env.DB.prepare('SELECT id FROM project_groups WHERE id = ?').bind(body.parent_id).first();
     if (!parent) {
       return jsonResponse({ error: '父项目组不存在' }, 400);
+    }
+  }
+
+  // 非超管只能在「自己担任管理员的组」下创建子组，避免越权建组
+  if (!isSuperAdmin) {
+    if (!body.parent_id) {
+      return jsonResponse({ error: '只有超级管理员可以创建顶级项目组' }, 403);
+    }
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, body.parent_id))) {
+      return jsonResponse({ error: '只能在自己管理的项目组下创建子组' }, 403);
     }
   }
 
@@ -475,15 +544,32 @@ groups.delete('/:id/members/:userId', async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 绑定域名到项目组（仅超级管理员） ==========
-groups.post('/:id/domains', requireRole('super_admin'), async (c) => {
+// ========== 绑定域名到项目组（超管任意；组管理员仅限自己管理范围内已有的域名） ==========
+groups.post('/:id/domains', async (c) => {
   const groupId = parseInt(c.req.param('id'));
   if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组 ID' }, 400);
   const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
   const body = await c.req.json<{ domain_id: number }>();
 
   if (!body.domain_id) {
     return jsonResponse({ error: '请指定域名' }, 400);
+  }
+
+  const group = await c.env.DB.prepare('SELECT id FROM project_groups WHERE id = ?').bind(groupId).first();
+  if (!group) {
+    return jsonResponse({ error: '项目组不存在' }, 404);
+  }
+
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足，只有项目组管理员可以绑定域名' }, 403);
+    }
+    // 只能复用自己管理范围内已绑定的域名，不能凭空绑定全站域名
+    const allowedIds = await getManageableDomainIds(c.env.DB, currentUser.user_id);
+    if (!allowedIds.includes(body.domain_id)) {
+      return jsonResponse({ error: '只能为子组添加自己管理范围内已绑定的域名' }, 403);
+    }
   }
 
   const domain = await c.env.DB.prepare(
@@ -506,14 +592,25 @@ groups.post('/:id/domains', requireRole('super_admin'), async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 解绑域名（仅超级管理员） ==========
-groups.delete('/:id/domains/:domainId', requireRole('super_admin'), async (c) => {
+// ========== 解绑域名（超管任意；组管理员仅可解绑非继承自父组的域名） ==========
+groups.delete('/:id/domains/:domainId', async (c) => {
   const groupId = parseInt(c.req.param('id'));
   const domainId = parseInt(c.req.param('domainId'));
   if (!Number.isFinite(groupId) || !Number.isFinite(domainId)) {
     return jsonResponse({ error: '无效的 ID' }, 400);
   }
   const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足，只有项目组管理员可以解绑域名' }, 403);
+    }
+    // 继承自父组的域名由父组统一管理，子组管理员不能直接移除
+    if (await isDomainBoundToAncestor(c.env.DB, groupId, domainId)) {
+      return jsonResponse({ error: '该域名继承自父组，请在父组解除绑定' }, 403);
+    }
+  }
 
   await c.env.DB.prepare('DELETE FROM group_domain_relations WHERE group_id = ? AND domain_id = ?').bind(groupId, domainId).run();
 

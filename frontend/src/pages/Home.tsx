@@ -91,9 +91,6 @@ export default function Home() {
             <a href="#start" className="transition-colors hover:text-gray-900 dark:hover:text-white">
               使用流程
             </a>
-            <a href="#why" className="transition-colors hover:text-gray-900 dark:hover:text-white">
-              技术架构
-            </a>
           </nav>
 
           <div className="flex items-center gap-2">
@@ -122,7 +119,7 @@ export default function Home() {
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white/70 px-3 py-1 text-xs font-medium text-gray-600 shadow-sm dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300">
                 <Sparkles className="h-3.5 w-3.5 text-brand-600 dark:text-brand-400" />
-                Cloudflare Workers · D1 · KV
+                作者：ChenCertain
               </span>
 
               <h1 className="mt-6 text-4xl font-bold leading-[1.22] tracking-tight sm:text-[2.6rem]">
@@ -156,7 +153,7 @@ export default function Home() {
               </div>
 
               <ul className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-500 dark:text-gray-400">
-                {['无需服务器运维', '全球边缘加速', '权限精细隔离'].map((item) => (
+                {['全球边缘加速', '权限精细隔离'].map((item) => (
                   <li key={item} className="flex items-center gap-1.5">
                     <Check className="h-4 w-4 text-emerald-500" />
                     {item}
@@ -263,38 +260,6 @@ export default function Home() {
                   </span>
                   <h3 className="mt-4 text-sm font-semibold">{step.title}</h3>
                   <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">{step.desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* 技术架构 */}
-        <section id="why" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6">
-          <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-brand-600 dark:text-brand-400">
-                技术架构
-              </p>
-              <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">跑在边缘，天生轻快</h2>
-              <p className="mt-3 text-gray-600 dark:text-gray-400">
-                没有需要维护的服务器。请求在离访客最近的节点完成解析与 302 跳转，配置与统计分别落在 D1 与 KV。
-              </p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                { title: 'Workers', desc: '全球边缘计算，跳转零冷启动' },
-                { title: 'D1 数据库', desc: '短链、域名、权限结构化管理' },
-                { title: 'KV 缓存', desc: '热点短链就近命中，降低回源' },
-                { title: 'Pages 静态资源', desc: '前端资源长缓存，秒开控制台' },
-              ].map((item) => (
-                <div
-                  key={item.title}
-                  className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
-                >
-                  <p className="text-sm font-semibold">{item.title}</p>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{item.desc}</p>
                 </div>
               ))}
             </div>

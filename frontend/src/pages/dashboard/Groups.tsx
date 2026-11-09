@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   ChevronDown,
   ChevronRight,
@@ -11,8 +12,8 @@ import {
   UserPlus,
   X,
 } from 'lucide-react'
-import { domainsApi, groupsApi, usersApi } from '@/lib/api'
-import type { Domain, GroupDetail, ProjectGroup, UserItem } from '@/lib/types'
+import { groupsApi, usersApi } from '@/lib/api'
+import type { GroupDetail, ProjectGroup, ShortLink, UserItem } from '@/lib/types'
 import {
   Badge,
   Button,
@@ -29,6 +30,7 @@ import {
   Textarea,
 } from '@/components/ui'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { EditLinkModal } from '@/components/EditLinkModal'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { ROLE_LABELS } from '@/lib/utils'
@@ -111,12 +113,14 @@ export default function Groups() {
   const [detailLoading, setDetailLoading] = useState(false)
 
   const [allUsers, setAllUsers] = useState<UserItem[]>([])
-  const [allDomains, setAllDomains] = useState<Domain[]>([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState({ name: '', description: '', parent_id: '' })
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
+
+  // 组内短链详情/编辑
+  const [editingLink, setEditingLink] = useState<ShortLink | null>(null)
 
   // 删除确认
   const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null)
@@ -139,6 +143,8 @@ export default function Groups() {
   const [domainOpen, setDomainOpen] = useState(false)
   const [domainId, setDomainId] = useState('')
   const [bindingDomain, setBindingDomain] = useState(false)
+  const [bindableDomains, setBindableDomains] = useState<{ id: number; domain: string; status?: string }[]>([])
+  const [bindablesLoading, setBindablesLoading] = useState(false)
 
   const flatGroups = useMemo(() => flattenGroups(groups), [groups])
 
@@ -160,17 +166,13 @@ export default function Groups() {
     void loadGroups()
   }, [loadGroups])
 
-  // 用户列表与域名列表仅超级管理员可获取
+  // 用户列表仅超级管理员可获取
   useEffect(() => {
     if (!isSuperAdmin) return
     usersApi
       .list({ pageSize: 200 })
       .then((data) => setAllUsers(data.users))
       .catch(() => setAllUsers([]))
-    domainsApi
-      .list()
-      .then((data) => setAllDomains(data.domains))
-      .catch(() => setAllDomains([]))
   }, [isSuperAdmin])
 
   const loadDetail = useCallback(
@@ -332,6 +334,31 @@ export default function Groups() {
     setMemberOpen(true)
   }
 
+  // 打开绑定域名弹窗：按当前用户权限加载可绑定域名（组管理员只能复用自己管理范围内已有的域名）
+  const openDomainModal = async () => {
+    if (!selectedId) return
+    setDomainId('')
+    setBindableDomains([])
+    setDomainOpen(true)
+    setBindablesLoading(true)
+    try {
+      const data = await groupsApi.bindableDomains(selectedId)
+      setBindableDomains(data.domains)
+    } catch (err) {
+      show((err as Error).message, 'error')
+      setBindableDomains([])
+    } finally {
+      setBindablesLoading(false)
+    }
+  }
+
+  // 新建项目组（超管）或在自己管理的组下新建子组
+  const openCreateModal = (parentId?: number) => {
+    setCreateForm({ name: '', description: '', parent_id: parentId ? String(parentId) : '' })
+    setCreateError('')
+    setCreateOpen(true)
+  }
+
   // 已在组内的成员 ID，用于从候选里排除
   const memberIds = useMemo(() => new Set((detail?.members || []).map((m) => m.id)), [detail])
 
@@ -363,11 +390,6 @@ export default function Groups() {
   const candidateList = isSuperAdmin ? matchedUsers.slice(0, 30) : matchedUsers
   const matchCount = matchedUsers.length
 
-  const boundDomainIds = new Set((detail?.domains || []).map((d) => d.id))
-  const availableDomains = allDomains.filter(
-    (d) => !boundDomainIds.has(d.id) && (d.type === 'short_link' || d.type === 'both'),
-  )
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -378,13 +400,7 @@ export default function Groups() {
           </p>
         </div>
         {isSuperAdmin && (
-          <Button
-            size="sm"
-            onClick={() => {
-              setCreateOpen(true)
-              setCreateError('')
-            }}
-          >
+          <Button size="sm" onClick={() => openCreateModal()}>
             <FolderPlus className="h-4 w-4" />
             新建项目组
           </Button>
@@ -437,9 +453,16 @@ export default function Groups() {
                           添加成员
                         </Button>
                       )}
-                      {/* 绑定域名仅超级管理员可用 */}
-                      {isSuperAdmin && (
-                        <Button variant="outline" size="sm" onClick={() => setDomainOpen(true)}>
+                      {/* 项目组管理员可在自己管理的组下创建子组 */}
+                      {(isSuperAdmin || canManageSelected) && (
+                        <Button variant="outline" size="sm" onClick={() => openCreateModal(detail.group.id)}>
+                          <FolderPlus className="h-4 w-4" />
+                          新建子组
+                        </Button>
+                      )}
+                      {/* 超管可绑定任意域名；项目组管理员只能复用自己管理范围内已有的域名 */}
+                      {(isSuperAdmin || canManageSelected) && (
+                        <Button variant="outline" size="sm" onClick={() => void openDomainModal()}>
                           <Globe className="h-4 w-4" />
                           绑定域名
                         </Button>
@@ -492,22 +515,27 @@ export default function Groups() {
                   />
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[560px] text-sm">
+                    <table className="w-full min-w-[640px] text-sm">
                       <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                         <tr>
                           <th className="px-5 py-2.5 font-medium">短链 / 名称</th>
                           <th className="px-4 py-2.5 font-medium">目标链接</th>
                           <th className="px-4 py-2.5 font-medium">创建人</th>
                           <th className="px-4 py-2.5 font-medium">状态</th>
+                          <th className="px-5 py-2.5 text-right font-medium">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                         {detail.links.map((l) => (
                           <tr key={l.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                             <td className="px-5 py-3">
-                              <p className="font-medium text-brand-600 dark:text-brand-400">
+                              {/* 与短链管理一致：点击短码进入详情页 */}
+                              <Link
+                                to={`/dashboard/links/${l.id}`}
+                                className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+                              >
                                 {l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
-                              </p>
+                              </Link>
                               <p className="truncate text-xs text-gray-500 dark:text-gray-400">
                                 {l.name || '（未命名）'}
                               </p>
@@ -525,6 +553,26 @@ export default function Groups() {
                                 <StatusBadge status={l.status} />
                                 {l.review_status === 'pending' && <Badge tone="yellow">待审核</Badge>}
                                 {l.review_status === 'rejected' && <Badge tone="red">未通过</Badge>}
+                              </div>
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <Link
+                                  to={`/dashboard/links/${l.id}`}
+                                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                                  title="查看详情"
+                                >
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                                {l.can_manage && (
+                                  <button
+                                    onClick={() => setEditingLink(l)}
+                                    className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                                    title="编辑"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -595,11 +643,11 @@ export default function Groups() {
                   description={
                     isSuperAdmin
                       ? '项目组内创建短链时可使用的域名'
-                      : '项目组内创建短链时可使用的域名（仅超级管理员可修改）'
+                      : '项目组内创建短链时可使用的域名（组管理员可复用父组已有域名）'
                   }
                   action={
-                    isSuperAdmin ? (
-                      <Button variant="outline" size="sm" onClick={() => setDomainOpen(true)}>
+                    isSuperAdmin || canManageSelected ? (
+                      <Button variant="outline" size="sm" onClick={() => void openDomainModal()}>
                         <Plus className="h-4 w-4" />
                         绑定
                       </Button>
@@ -612,7 +660,9 @@ export default function Groups() {
                     description={
                       isSuperAdmin
                         ? '绑定域名后，组内成员即可使用该域名创建短链'
-                        : '该项目组暂未绑定域名，请联系超级管理员绑定'
+                        : canManageSelected
+                          ? '可绑定自己管理范围内（含父组）已经绑定过的域名'
+                          : '该项目组暂未绑定域名，请联系项目组管理员或超级管理员绑定'
                     }
                   />
                 ) : (
@@ -622,7 +672,7 @@ export default function Groups() {
                         <Globe className="h-4 w-4 text-gray-400" />
                         <span className="flex-1 text-sm text-gray-900 dark:text-gray-100">{d.domain}</span>
                         <StatusBadge status={d.status} />
-                        {isSuperAdmin && (
+                        {(isSuperAdmin || canManageSelected) && (
                           <button
                             onClick={() => handleUnbindDomain(d.id)}
                             className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
@@ -642,7 +692,11 @@ export default function Groups() {
                 {detail.subGroups.length === 0 ? (
                   <EmptyState
                     title="暂无子组"
-                    description={isSuperAdmin ? '新建项目组时选择父组即可创建子组' : '暂无子项目组'}
+                    description={
+                    isSuperAdmin || canManageSelected
+                      ? '点击上方「新建子组」即可创建，子组会继承父组的管理权限'
+                      : '暂无子项目组'
+                  }
                   />
                 ) : (
                   <ul className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -662,11 +716,11 @@ export default function Groups() {
         </div>
       </div>
 
-      {/* 新建项目组（仅超管） */}
+      {/* 新建项目组（超管）或子组（项目组管理员） */}
       <Modal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        title="新建项目组"
+        title={isSuperAdmin ? '新建项目组' : '新建子组'}
         footer={
           <>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -688,21 +742,33 @@ export default function Groups() {
               placeholder="如：市场部"
             />
           </div>
-          <div>
-            <Label htmlFor="g-parent">父项目组（可选，用于创建子组）</Label>
-            <Select
-              id="g-parent"
-              value={createForm.parent_id}
-              onChange={(e) => setCreateForm({ ...createForm, parent_id: e.target.value })}
-            >
-              <option value="">无（作为顶级项目组）</option>
-              {flatGroups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+          {isSuperAdmin ? (
+            <div>
+              <Label htmlFor="g-parent">父项目组（可选，用于创建子组）</Label>
+              <Select
+                id="g-parent"
+                value={createForm.parent_id}
+                onChange={(e) => setCreateForm({ ...createForm, parent_id: e.target.value })}
+              >
+                <option value="">无（作为顶级项目组）</option>
+                {flatGroups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : (
+            <div>
+              <Label>父项目组</Label>
+              <div className="flex h-10 items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+                {flatGroups.find((g) => String(g.id) === createForm.parent_id)?.label || '当前项目组'}
+              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                只能在你自己管理的项目组下创建子组，子组会继承父组的管理权限
+              </p>
+            </div>
+          )}
           <div>
             <Label htmlFor="g-desc">描述</Label>
             <Textarea
@@ -848,7 +914,7 @@ export default function Groups() {
         </div>
       </Modal>
 
-      {/* 绑定域名（仅超管） */}
+      {/* 绑定域名（超管任意域名；项目组管理员仅限自己管理范围内已有域名） */}
       <Modal
         open={domainOpen}
         onClose={() => setDomainOpen(false)}
@@ -867,23 +933,46 @@ export default function Groups() {
         <form onSubmit={handleBindDomain} className="space-y-4">
           <div>
             <Label htmlFor="d-select">选择域名</Label>
-            <Select id="d-select" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-              <option value="">请选择域名</option>
-              {availableDomains.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.domain}
-                  {d.status !== 'active' ? '（未激活）' : ''}
-                </option>
-              ))}
-            </Select>
-            {availableDomains.length === 0 && (
+            {bindablesLoading ? (
+              <div className="flex h-10 items-center rounded-lg border border-gray-200 px-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                可绑定域名加载中...
+              </div>
+            ) : (
+              <Select id="d-select" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
+                <option value="">请选择域名</option>
+                {bindableDomains.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.domain}
+                    {d.status && d.status !== 'active' ? '（未激活）' : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {!bindablesLoading && bindableDomains.length === 0 && (
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                暂无可用域名，请先在「域名管理」中添加并验证域名
+                {isSuperAdmin
+                  ? '暂无可绑定域名，请先在「域名管理」中添加并验证域名'
+                  : '暂无可用域名：只能绑定自己管理范围内（含父组）已经绑定过且可用的域名，如有需要请联系超级管理员'}
+              </p>
+            )}
+            {!isSuperAdmin && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                为避免越权，项目组管理员只能把父组已有的域名分配给子组，无法绑定全站其它域名
               </p>
             )}
           </div>
         </form>
       </Modal>
+
+      {/* 组内短链编辑：与短链管理使用同一套编辑弹窗 */}
+      <EditLinkModal
+        link={editingLink}
+        groups={groups}
+        onClose={() => setEditingLink(null)}
+        onSaved={() => {
+          if (selectedId) void loadDetail(selectedId)
+        }}
+      />
 
       <ConfirmDialog
         open={deletingGroupId !== null}

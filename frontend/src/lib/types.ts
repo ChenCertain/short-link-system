@@ -90,21 +90,8 @@ export interface ReviewLink extends ShortLink {
   review_group_name?: string | null
 }
 
-// 项目组内短链（项目组详情中使用）
-export interface GroupLink {
-  id: number
-  short_code: string
-  target_url: string
-  name: string
-  status: string
-  review_status: ReviewStatus
-  click_count: number
-  created_at: number
-  expires_at: number | null
-  domain_name?: string | null
-  creator_name?: string
-  creator_email?: string
-}
+// 项目组内短链（项目组详情中使用，字段与短链管理一致，便于直接复用详情/编辑）
+export type GroupLink = ShortLink
 
 export interface GroupDetail {
   group: ProjectGroup

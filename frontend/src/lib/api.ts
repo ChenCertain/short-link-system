@@ -168,6 +168,8 @@ export const groupsApi = {
     get<{ domains: { id: number; domain: string; is_default_short_link: number }[] }>(
       `/api/groups/${id}/available-domains`,
     ),
+  bindableDomains: (id: number) =>
+    get<{ domains: { id: number; domain: string; status?: string }[] }>(`/api/groups/${id}/bindable-domains`),
   create: (payload: { name: string; description?: string; parent_id?: number }) =>
     post<{ success: boolean; id: number }>('/api/groups', payload),
   update: (id: number, payload: { name?: string; description?: string }) =>

@@ -31,15 +31,19 @@ links.get('/', authMiddleware, async (c) => {
   const creatorId = c.req.query('creatorId');
   const offset = (page - 1) * pageSize;
 
-  let query = `
-    SELECT sl.*, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
-      pg.name as group_name
+  // 列表与计数共用同一套 JOIN，保证关键词可以命中创建人、域名
+  const fromClause = `
     FROM short_links sl
     LEFT JOIN domains d ON sl.domain_id = d.id
     LEFT JOIN users u ON sl.created_by = u.id
     LEFT JOIN project_groups pg ON sl.group_id = pg.id
   `;
-  let countQuery = 'SELECT COUNT(*) as total FROM short_links sl';
+  let query = `
+    SELECT sl.*, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
+      pg.name as group_name
+    ${fromClause}
+  `;
+  let countQuery = `SELECT COUNT(*) as total ${fromClause}`;
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
@@ -61,8 +65,13 @@ links.get('/', authMiddleware, async (c) => {
   // super_admin 无额外条件
 
   if (search) {
-    conditions.push('(sl.short_code LIKE ? OR sl.target_url LIKE ? OR sl.name LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    // 关键词模糊匹配：短码、别名、名称、目标链接、创建人（姓名/邮箱）、域名
+    const like = `%${search}%`;
+    conditions.push(
+      `(sl.short_code LIKE ? OR sl.custom_alias LIKE ? OR sl.name LIKE ? OR sl.target_url LIKE ?
+        OR u.name LIKE ? OR u.email LIKE ? OR d.domain LIKE ?)`,
+    );
+    params.push(like, like, like, like, like, like, like);
   }
 
   if (status) {
