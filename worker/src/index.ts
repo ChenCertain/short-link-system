@@ -7,6 +7,7 @@ import { jsonResponse } from './utils';
 // 路由模块
 import auth from './routes/auth';
 import users from './routes/users';
+import profile from './routes/profile';
 import groups from './routes/groups';
 import domains from './routes/domains';
 import links from './routes/links';
@@ -54,6 +55,7 @@ app.get('/api/health', (c) =>
 // ========== API 路由 ==========
 app.route('/api/auth', auth);
 app.route('/api/users', users);
+app.route('/api/profile', profile);
 app.route('/api/groups', groups);
 app.route('/api/domains', domains);
 app.route('/api/links', links);

@@ -25,6 +25,37 @@ domains.get('/short-link-domains', async (c) => {
   return jsonResponse({ domains: list.results });
 });
 
+// ========== 本实例的 CNAME 目标地址 ==========
+
+function normalizeHost(input: string): string {
+  return input.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
+}
+
+/**
+ * 推断本 Worker 的 workers.dev 主机名，作为用户需要配置的 CNAME 目标：
+ * 1) 环境变量 WORKER_HOST
+ * 2) 环境变量 PAGES_DOMAIN（仅当其本身是 workers.dev 域名）
+ * 3) 当前请求所在的 workers.dev 域名
+ */
+async function resolveWorkerHost(c: { env: Env; req: { url: string } }): Promise<string> {
+  const configured = normalizeHost(c.env.WORKER_HOST || '');
+  if (configured) return configured;
+
+  const pagesDomain = normalizeHost(c.env.PAGES_DOMAIN || '');
+  if (pagesDomain.endsWith('.workers.dev')) return pagesDomain;
+
+  const current = normalizeHost(new URL(c.req.url).hostname);
+  if (current.endsWith('.workers.dev')) return current;
+
+  return '';
+}
+
+// 获取 CNAME 目标地址（前端直接展示，无需用户自己去 Worker 后台查看）
+domains.get('/worker-host', async (c) => {
+  const host = await resolveWorkerHost(c);
+  return jsonResponse({ host, available: !!host });
+});
+
 // ========== 添加域名 ==========
 domains.post('/', requireRole('super_admin'), async (c) => {
   const body = await c.req.json<{
@@ -66,19 +97,21 @@ domains.post('/', requireRole('super_admin'), async (c) => {
 
   await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'add_domain', c.req.raw, 'domain', domainId as number, JSON.stringify(body));
 
-  // 返回需要配置的 DNS 记录（PAGES_DOMAIN 可留空，此时提示手动填写 Worker 域名）
-  const workerHost = (c.env.PAGES_DOMAIN || '').trim();
+  // 返回需要配置的 DNS 记录（CNAME 目标自动取本 Worker 的 workers.dev 域名）
+  const workerHost = await resolveWorkerHost(c);
+  const hostedOnCloudflare = await isCloudflareHosted(domain);
   return jsonResponse({
     success: true,
     id: domainId,
     domain,
+    hosted_on_cloudflare: hostedOnCloudflare,
     dns_config: {
       type: 'CNAME',
       name: domain,
       target: workerHost,
-      instructions: workerHost
-        ? '方式一：在 Cloudflare DNS 添加以上 CNAME 记录；方式二：在 Worker → Settings → Domains & Routes 直接绑定该域名。两种方式配置完成后点击验证。'
-        : '方式一：到 Worker → Settings → Domains & Routes 查看 xxx.workers.dev 地址，作为 CNAME 目标填入 DNS；方式二：在 Worker → Settings → Domains & Routes 里直接添加该域名。配置完成后点击验证。',
+      instructions: hostedOnCloudflare
+        ? `推荐方式：在 Worker → Settings → Domains & Routes 直接绑定该域名（Cloudflare 自动生成记录与证书），绑定后点击验证。\n也可手动在 Cloudflare DNS 添加 CNAME：${domain} → ${workerHost || '（本 Worker 的 workers.dev 域名）'}。`
+        : `该域名未托管在 Cloudflare（NS 不指向 Cloudflare）：\n① 推荐把域名的 NS 记录迁移到 Cloudflare，然后在 Worker → Settings → Domains & Routes 绑定该域名；\n② 或在第三方 DNS 添加 CNAME：${domain} → ${workerHost || '（本 Worker 的 workers.dev 域名）'}，但 Cloudflare 无法为该域名签发证书，通常无法以 HTTPS 打开（需使用 Cloudflare for SaaS）；\n③ 也可以继续用第三方 CDN 回源到该地址。`,
     },
   }, 201);
 });
@@ -168,7 +201,7 @@ function isCloudflareIp(ip: string): boolean {
   return lower.includes(':') && CF_IPV6_PREFIXES.some((prefix) => lower.startsWith(prefix));
 }
 
-async function dohQuery(name: string, type: 'A' | 'AAAA' | 'CNAME'): Promise<string[]> {
+async function dohQuery(name: string, type: 'A' | 'AAAA' | 'CNAME' | 'NS'): Promise<string[]> {
   try {
     const resp = await fetch(
       `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`,
@@ -182,43 +215,79 @@ async function dohQuery(name: string, type: 'A' | 'AAAA' | 'CNAME'): Promise<str
 }
 
 /**
+ * 判断域名是否由 Cloudflare 托管 DNS（NS 指向 *.ns.cloudflare.com）。
+ * 子域本身可能没有 NS 记录（或返回被展平的 CNAME），逐级向上查找所属 zone。
+ */
+async function isCloudflareHosted(domain: string): Promise<boolean> {
+  const labels = domain.split('.');
+  for (let i = 0; i <= labels.length - 2; i++) {
+    const zone = labels.slice(i).join('.');
+    const records = (await dohQuery(zone, 'NS'))
+      // 排除被 DNS 展平的 CNAME 目标（不是真实的 NS）
+      .filter((r) => !r.toLowerCase().includes('workers.dev'));
+    if (records.length > 0) {
+      return records.some((ns) => /\.ns\.cloudflare\.com\.?$/i.test(ns.trim()));
+    }
+  }
+  return false;
+}
+
+/** 探测域名是否可以正常打开本系统（HTTP 可达 + 返回本系统标识） */
+async function probeSite(domain: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`https://${domain}/api/health`, {
+      headers: { Accept: 'application/json' },
+      redirect: 'follow',
+    });
+    if (!resp.ok) return false;
+    const data = (await resp.json()) as { status?: string; service?: string };
+    return data.status === 'ok' && data.service === 'short-link-system';
+  } catch {
+    // 同账号同区域的回环请求可能被 Cloudflare 拦截（1042）
+    return false;
+  }
+}
+
+/**
  * 判断域名是否已接入本系统，支持两种方式：
- * 1) CNAME 指向 Worker（传统方式）
+ * 1) CNAME 指向 Worker（要求站点可访问：第三方 DNS 直接 CNAME 到 workers.dev 无法签发证书）
  * 2) Worker 自定义域名（Custom Domain）：Cloudflare 会自动生成代理 A/AAAA 记录，不存在 CNAME
  */
 async function verifyDomain(domain: string, expectedTarget: string): Promise<VerifyResult> {
   const expected = expectedTarget.replace(/\.$/, '').toLowerCase();
 
   // 方式一：直接请求站点健康检查接口，返回本系统标识即认为已接入
-  try {
-    const resp = await fetch(`https://${domain}/api/health`, {
-      headers: { Accept: 'application/json' },
-      redirect: 'follow',
-    });
-    if (resp.ok) {
-      const data = (await resp.json()) as { status?: string; service?: string };
-      if (data.status === 'ok' && data.service === 'short-link-system') {
-        return { verified: true, method: 'http', message: '域名验证成功：站点已指向本系统' };
-      }
-    }
-  } catch {
-    // 同账号同区域的回环请求可能被 Cloudflare 拦截（1042），继续走 DNS 检测
+  if (await probeSite(domain)) {
+    return { verified: true, method: 'http', message: '域名验证成功：站点已指向本系统' };
   }
 
-  // 方式二：检查 CNAME 记录
   const cnames = await dohQuery(domain, 'CNAME');
   if (cnames.length > 0) {
-    const hit = cnames.some((value) => {
+    const pointsToWorker = cnames.some((value) => {
       const v = value.toLowerCase();
-      if (!expected) return true;
-      return v.includes(expected) || v.includes('workers.dev');
+      // workers.dev：本 Worker 地址；cdn.cloudflare.net：Cloudflare for SaaS 的接入端点
+      if (!expected) return v.includes('workers.dev') || v.includes('cdn.cloudflare.net');
+      return v.includes(expected) || v.includes('workers.dev') || v.includes('cdn.cloudflare.net');
     });
-    if (hit) {
-      return { verified: true, method: 'cname', message: '域名验证成功：CNAME 记录已生效' };
+
+    if (!pointsToWorker) {
+      return {
+        verified: false,
+        message: `CNAME 当前指向 ${cnames[0]}，未指向本系统（应指向 ${expected || '本 Worker 的 workers.dev 域名'}）`,
+      };
     }
+
+    // CNAME 已指向本 Worker，但站点打不开：多为域名 DNS 不在 Cloudflare 托管
+    const hosted = await isCloudflareHosted(domain);
+    return {
+      verified: false,
+      message: hosted
+        ? 'CNAME 已生效，但站点暂不可访问：若刚修改解析请等待几分钟后重试；也可改用在 Worker → Settings → Domains & Routes 绑定该域名。'
+        : `CNAME 已指向本 Worker，但 HTTPS 无法访问：该域名的 DNS 不在 Cloudflare 托管，Cloudflare 无法为其签发证书（不支持第三方 DNS 直接 CNAME 到 workers.dev）。请把域名 NS 迁移到 Cloudflare 后绑定，或使用 Cloudflare for SaaS。`,
+    };
   }
 
-  // 方式三：Workers 自定义域名会生成代理 A/AAAA 记录，解析到 Cloudflare 网段即视为已接入
+  // 方式二：Workers 自定义域名会生成代理 A/AAAA 记录，解析到 Cloudflare 网段即视为已接入
   const addresses = [...(await dohQuery(domain, 'A')), ...(await dohQuery(domain, 'AAAA'))];
   if (addresses.some((ip) => isCloudflareIp(ip))) {
     return {
@@ -230,7 +299,7 @@ async function verifyDomain(domain: string, expectedTarget: string): Promise<Ver
 
   return {
     verified: false,
-    message: '未检测到有效解析：请在 DNS 添加指向 Worker 的 CNAME，或在 Worker → Settings → Domains & Routes 绑定该域名后再验证',
+    message: '未检测到有效解析：请在 DNS 添加指向本实例 workers.dev 的 CNAME，或在 Worker → Settings → Domains & Routes 绑定该域名后再验证',
   };
 }
 
@@ -243,7 +312,8 @@ domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
     return jsonResponse({ error: '域名不存在' }, 404);
   }
 
-  const result = await verifyDomain(domain.domain, (c.env.PAGES_DOMAIN || '').trim());
+  const workerHost = await resolveWorkerHost(c);
+  const result = await verifyDomain(domain.domain, workerHost);
 
   if (result.verified) {
     await c.env.DB.prepare("UPDATE domains SET status = 'active', updated_at = ? WHERE id = ?")
@@ -252,7 +322,13 @@ domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
     return jsonResponse({ success: true, verified: true, method: result.method, message: result.message });
   }
 
-  return jsonResponse({ success: false, verified: false, message: result.message }, 400);
+  return jsonResponse({
+    success: false,
+    verified: false,
+    message: result.message,
+    worker_host: workerHost,
+    hosted_on_cloudflare: await isCloudflareHosted(domain.domain),
+  }, 400);
 });
 
 // ========== 删除域名 ==========

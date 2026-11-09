@@ -109,11 +109,11 @@ export default function Users() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     setCreateError('')
-    if (!createForm.name.trim() || !createForm.email.trim() || !createForm.password) {
-      setCreateError('请填写所有必填字段')
+    if (!createForm.name.trim() || !createForm.email.trim()) {
+      setCreateError('请填写用户名和邮箱')
       return
     }
-    if (createForm.password.length < 8) {
+    if (createForm.password && createForm.password.length < 8) {
       setCreateError('密码长度至少 8 位')
       return
     }
@@ -122,7 +122,7 @@ export default function Users() {
       await usersApi.create({
         name: createForm.name.trim(),
         email: createForm.email.trim(),
-        password: createForm.password,
+        password: createForm.password || undefined,
         role: createForm.role,
         require_review: createForm.require_review,
         review_by: createForm.review_by,
@@ -260,6 +260,7 @@ export default function Users() {
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <StatusBadge status={u.status === 'active' ? 'active' : 'disabled'} />
+                          {u.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
                           {!!u.require_review && (
                             <Badge tone="yellow">
                               {u.review_by === 'super_admin' ? '超管审核' : '需审核'}
@@ -364,13 +365,17 @@ export default function Users() {
             />
           </div>
           <div>
-            <Label htmlFor="u-password">初始密码 *（至少 8 位）</Label>
+            <Label htmlFor="u-password">初始密码（可留空）</Label>
             <Input
               id="u-password"
               type="password"
+              placeholder="留空则由用户首次登录时自行设置"
               value={createForm.password}
               onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
             />
+            <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+              留空时用户需在登录页点击「首次使用 / 还没有密码」通过邮箱验证码自行设置
+            </p>
           </div>
           <div>
             <Label htmlFor="u-role">角色</Label>

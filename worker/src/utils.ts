@@ -14,6 +14,25 @@ export function generateShortCode(length: number = 6): string {
   return result;
 }
 
+// 自定义别名（短码）长度上限
+export const ALIAS_MAX_LENGTH = 64;
+
+// 别名允许：中文/字母/数字/下划线/短横线（不含 . / ? # 等会破坏路由的字符）
+const ALIAS_PATTERN = /^[\p{L}\p{N}_-]+$/u;
+
+// 系统保留路径：这些短码会被静态资源或前端路由占用，创建后无法正常跳转
+export const RESERVED_CODES = new Set(['login', 'init', 'dashboard', 'api', 'assets', 'cdn-cgi']);
+
+/** 校验自定义别名，通过返回 null，否则返回错误提示 */
+export function validateAlias(alias: string): string | null {
+  const value = alias.trim();
+  if (!value) return '自定义别名不能为空';
+  if (value.length > ALIAS_MAX_LENGTH) return `自定义别名最长 ${ALIAS_MAX_LENGTH} 个字符`;
+  if (!ALIAS_PATTERN.test(value)) return '自定义别名只能包含中文、字母、数字、下划线和短横线';
+  if (RESERVED_CODES.has(value.toLowerCase())) return '该别名是系统保留路径，请更换';
+  return null;
+}
+
 // 生成随机验证码（6位数字）
 export function generateVerifyCode(): string {
   const values = new Uint8Array(6);

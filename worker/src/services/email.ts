@@ -13,7 +13,12 @@ export function isSmtpConfigured(env: SmtpEnv): boolean {
   return Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 }
 
-export async function sendVerificationEmail(email: string, code: string, env: SmtpEnv): Promise<boolean> {
+export async function sendVerificationEmail(
+  email: string,
+  code: string,
+  env: SmtpEnv,
+  subject: string = MAIL_SUBJECT
+): Promise<boolean> {
   if (!isSmtpConfigured(env)) {
     // 未配置 SMTP 时（本地开发），验证码打印到控制台，并由接口返回给前端自动填充
     console.warn('[email] SMTP 未配置，验证码为：', code);
@@ -22,7 +27,7 @@ export async function sendVerificationEmail(email: string, code: string, env: Sm
 
   const html = buildVerificationEmailHTML(code);
   const text = `您的验证码是：${code}，有效期 10 分钟。请勿泄露给他人。`;
-  const mime = buildMimeMessage(env.SMTP_FROM || env.SMTP_USER, email, MAIL_SUBJECT, text, html);
+  const mime = buildMimeMessage(env.SMTP_FROM || env.SMTP_USER, email, subject, text, html);
 
   try {
     await sendViaSMTP(env, env.SMTP_FROM || env.SMTP_USER, email, mime);

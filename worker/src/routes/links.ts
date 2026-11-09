@@ -2,7 +2,7 @@
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { jsonResponse, generateShortCode, hashPassword } from '../utils';
+import { jsonResponse, generateShortCode, hashPassword, validateAlias } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
 import {
   getManagedGroupIds,
@@ -256,13 +256,15 @@ links.post('/', authMiddleware, async (c) => {
   }
 
   // 生成短码
-  let shortCode = body.custom_alias?.trim() || generateShortCode(6);
-  if (body.custom_alias) {
-    // 验证自定义别名格式
-    if (!/^[a-zA-Z0-9_-]{3,32}$/.test(body.custom_alias)) {
-      return jsonResponse({ error: '自定义别名只能包含字母、数字、下划线、短横线，长度 3-32' }, 400);
+  const aliasInput = body.custom_alias?.trim();
+  if (aliasInput) {
+    const aliasError = validateAlias(aliasInput);
+    if (aliasError) {
+      return jsonResponse({ error: aliasError }, 400);
     }
+    body.custom_alias = aliasInput;
   }
+  let shortCode = aliasInput || generateShortCode(6);
 
   // 检查短码冲突
   let attempts = 0;
@@ -392,9 +394,10 @@ links.put('/:id', authMiddleware, async (c) => {
     expires_at?: number;
     redirect_type?: number;
     group_id?: number;
+    short_code?: string;
   }>();
 
-  const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{ id: number; created_by: number; group_id: number | null; domain_id: number | null }>();
+  const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{ id: number; created_by: number; group_id: number | null; domain_id: number | null; short_code: string }>();
   if (!link) {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
@@ -431,6 +434,27 @@ links.put('/:id', authMiddleware, async (c) => {
 
   const updates: string[] = [];
   const params: (string | number | null)[] = [];
+
+  // 修改别名（短码）：格式校验 + 全局唯一性检查
+  if (body.short_code !== undefined) {
+    const alias = body.short_code.trim();
+    if (!alias) {
+      return jsonResponse({ error: '自定义别名不能为空' }, 400);
+    }
+    const aliasError = validateAlias(alias);
+    if (aliasError) {
+      return jsonResponse({ error: aliasError }, 400);
+    }
+    if (alias !== link.short_code) {
+      const conflict = await c.env.DB.prepare('SELECT id FROM short_links WHERE short_code = ? AND id != ?')
+        .bind(alias, linkId).first();
+      if (conflict) {
+        return jsonResponse({ error: '该自定义别名已被使用' }, 400);
+      }
+      updates.push('short_code = ?'); params.push(alias);
+      updates.push('custom_alias = ?'); params.push(alias);
+    }
+  }
 
   if (body.target_url) {
     try { new URL(body.target_url); } catch { return jsonResponse({ error: '目标链接格式不正确' }, 400); }
@@ -530,10 +554,19 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
       continue;
     }
 
-    let shortCode = item.custom_alias?.trim() || generateShortCode(6);
+    const aliasInput = item.custom_alias?.trim();
+    if (aliasInput) {
+      const aliasError = validateAlias(aliasInput);
+      if (aliasError) {
+        results.push({ success: false, error: aliasError, target_url: item.target_url });
+        continue;
+      }
+    }
+
+    let shortCode = aliasInput || generateShortCode(6);
     const existing = await c.env.DB.prepare('SELECT id FROM short_links WHERE short_code = ?').bind(shortCode).first();
     if (existing) {
-      if (item.custom_alias) {
+      if (aliasInput) {
         results.push({ success: false, error: '别名已存在', target_url: item.target_url });
         continue;
       }
@@ -543,7 +576,7 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
     const result = await c.env.DB.prepare(
       `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, created_by, domain_id)
        VALUES (?, ?, ?, ?, 'active', 302, ?, ?)`
-    ).bind(shortCode, item.target_url, item.name || '', item.custom_alias || null, currentUser.user_id, defaultDomain?.id || null).run();
+    ).bind(shortCode, item.target_url, item.name || '', aliasInput || null, currentUser.user_id, defaultDomain?.id || null).run();
 
     results.push({ success: true, short_code: shortCode, target_url: item.target_url });
   }

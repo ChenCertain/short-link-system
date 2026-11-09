@@ -15,6 +15,8 @@ export interface Env {
   SMTP_FROM: string;
   // 本实例的默认访问域名（workers.dev / 自定义域名），用于展示短链地址与 DNS 指引
   PAGES_DOMAIN?: string;
+  // 本 Worker 的 workers.dev 域名（不含协议），用于域名管理里的 CNAME 目标指引
+  WORKER_HOST?: string;
 }
 
 // 用户角色（项目组管理员由 user_group_relations.role = 'admin' 表达）

@@ -185,6 +185,12 @@ export default function Links() {
 
   const groupOptions = useMemo(() => flattenGroups(groups), [groups])
 
+  // 平台默认短链域名；未设置为空字符串，表示暂无默认域名
+  const globalDefaultDomainId = useMemo(() => {
+    const target = domains.find((d) => d.is_default_short_link === 1)
+    return target ? String(target.id) : ''
+  }, [domains])
+
   const loadLinks = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -223,9 +229,10 @@ export default function Links() {
     try {
       const data = await groupsApi.availableDomains(Number(groupId))
       setGroupDomains(data.domains)
-      // 默认选中该组第一个可用域名
+      // 仅当项目组设置了默认域名时才自动选中，否则留空交由用户选择
+      const preferred = data.domains.find((d) => d.is_default_short_link === 1)
       setCreateForm((prev) =>
-        prev.group_id === groupId ? { ...prev, domain_id: data.domains[0] ? String(data.domains[0].id) : '' } : prev,
+        prev.group_id === groupId ? { ...prev, domain_id: preferred ? String(preferred.id) : '' } : prev,
       )
     } catch {
       setGroupDomains([])
@@ -242,8 +249,27 @@ export default function Links() {
       setCreateError('请填写目标链接')
       return
     }
+    const aliasInput = createForm.custom_alias.trim()
+    if (aliasInput) {
+      if (aliasInput.length > 64) {
+        setCreateError('自定义别名最长 64 个字符')
+        return
+      }
+      if (!/^[\p{L}\p{N}_-]+$/u.test(aliasInput)) {
+        setCreateError('自定义别名只能包含中文、字母、数字、下划线和短横线')
+        return
+      }
+      if (['login', 'init', 'dashboard', 'api', 'assets', 'cdn-cgi'].includes(aliasInput.toLowerCase())) {
+        setCreateError('该别名是系统保留路径，请更换')
+        return
+      }
+    }
     if (createForm.group_id && !groupDomainsLoading && groupDomains.length === 0) {
       setCreateError('该项目组暂无可用域名，请联系超级管理员绑定域名')
+      return
+    }
+    if (createForm.group_id && !createForm.domain_id) {
+      setCreateError('该项目组未设置默认域名，请选择要使用的短链域名')
       return
     }
 
@@ -294,11 +320,31 @@ export default function Links() {
     e.preventDefault()
     if (!editing) return
     setEditError('')
+
+    const aliasInput = editForm.custom_alias.trim()
+    if (!aliasInput) {
+      setEditError('自定义别名不能为空')
+      return
+    }
+    if (aliasInput.length > 64) {
+      setEditError('自定义别名最长 64 个字符')
+      return
+    }
+    if (!/^[\p{L}\p{N}_-]+$/u.test(aliasInput)) {
+      setEditError('自定义别名只能包含中文、字母、数字、下划线和短横线')
+      return
+    }
+    if (['login', 'init', 'dashboard', 'api', 'assets', 'cdn-cgi'].includes(aliasInput.toLowerCase())) {
+      setEditError('该别名是系统保留路径，请更换')
+      return
+    }
+
     setSaving(true)
     try {
       await linksApi.update(editing.id, {
         target_url: editForm.target_url,
         name: editForm.name,
+        short_code: aliasInput,
         group_id: editForm.group_id ? Number(editForm.group_id) : null,
         password: editForm.password,
         expires_at: localInputToTimestamp(editForm.expires_at),
@@ -401,11 +447,12 @@ export default function Links() {
               setCreateOpen(true)
               setCreatedUrl('')
               setCreateError('')
-              // 恢复上次选择项目组的可用域名；未选择则清空
+              // 有项目组则加载组内域名；否则回落到平台默认域名（未设置则为空）
               if (createForm.group_id) {
                 void loadGroupDomains(createForm.group_id)
               } else {
                 setGroupDomains([])
+                setCreateForm((prev) => ({ ...prev, domain_id: globalDefaultDomainId }))
               }
             }}
           >
@@ -643,9 +690,13 @@ export default function Links() {
               <Input
                 id="alias"
                 placeholder="留空自动生成"
+                maxLength={64}
                 value={createForm.custom_alias}
                 onChange={(e) => setCreateForm({ ...createForm, custom_alias: e.target.value })}
               />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                1-64 个字符，支持中文、字母、数字、下划线和短横线
+              </p>
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -656,7 +707,12 @@ export default function Links() {
                 value={createForm.group_id}
                 onChange={(e) => {
                   const gid = e.target.value
-                  setCreateForm({ ...createForm, group_id: gid, domain_id: '' })
+                  setCreateForm({
+                    ...createForm,
+                    group_id: gid,
+                    // 切回不归属项目组时回落到平台默认域名（未设置则为空）
+                    domain_id: gid ? '' : globalDefaultDomainId,
+                  })
                   void loadGroupDomains(gid)
                 }}
               >
@@ -685,6 +741,7 @@ export default function Links() {
                     value={createForm.domain_id}
                     onChange={(e) => setCreateForm({ ...createForm, domain_id: e.target.value })}
                   >
+                    <option value="">暂无默认域名，请选择</option>
                     {groupDomains.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.domain}
@@ -699,7 +756,7 @@ export default function Links() {
                   value={createForm.domain_id}
                   onChange={(e) => setCreateForm({ ...createForm, domain_id: e.target.value })}
                 >
-                  <option value="">默认域名</option>
+                  <option value="">{globalDefaultDomainId ? '跟随默认域名' : '暂无默认域名'}</option>
                   {domains.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.domain}
@@ -712,8 +769,12 @@ export default function Links() {
                 {createForm.group_id
                   ? groupDomains.length === 0 && !groupDomainsLoading
                     ? '该项目组暂未绑定域名，请联系超级管理员'
-                    : '项目组短链只能使用该组已绑定的域名'
-                  : '未归属项目组时使用平台默认域名'}
+                    : groupDomains.some((d) => d.is_default_short_link === 1)
+                      ? '默认使用项目组设定的默认域名，也可手动切换'
+                      : '该项目组未设置默认域名，请手动选择'
+                  : globalDefaultDomainId
+                    ? '未归属项目组时使用平台默认域名'
+                    : '平台未设置默认域名，短链将使用当前站点域名'}
               </p>
             </div>
           </div>
@@ -777,8 +838,16 @@ export default function Links() {
       >
         <form onSubmit={handleSaveEdit} className="space-y-4">
           <div>
-            <Label>短码</Label>
-            <Input value={editing?.short_code || ''} disabled />
+            <Label htmlFor="edit-code">自定义别名（短码）</Label>
+            <Input
+              id="edit-code"
+              maxLength={64}
+              value={editForm.custom_alias}
+              onChange={(e) => setEditForm({ ...editForm, custom_alias: e.target.value })}
+            />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              1-64 个字符，支持中文、字母、数字、下划线和短横线；修改后旧链接立即失效
+            </p>
           </div>
           <div>
             <Label htmlFor="edit-target">目标链接</Label>
@@ -867,7 +936,7 @@ export default function Links() {
         <div className="space-y-3">
           <p className="text-sm text-gray-500 dark:text-gray-400">
             每行一条，格式：<code className="rounded bg-gray-100 px-1 dark:bg-gray-800">目标链接,名称,自定义别名</code>
-            （名称和别名可省略）
+            （名称和别名可省略；别名 1-64 个字符，支持中文、字母、数字、下划线和短横线）
           </p>
           <Textarea
             rows={10}

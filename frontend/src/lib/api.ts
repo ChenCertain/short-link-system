@@ -18,9 +18,12 @@ const TOKEN_KEY = 'sl_token'
 
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  // 后端返回的业务错误码，如 PASSWORD_NOT_SET，用于前端切换对应流程
+  code?: string
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.status = status
+    this.code = code
   }
 }
 
@@ -67,7 +70,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       clearToken()
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
     }
-    throw new ApiError(message, resp.status)
+    throw new ApiError(message, resp.status, (data as { code?: string } | null)?.code)
   }
 
   return data as T
@@ -83,13 +86,41 @@ const del = <T>(path: string) => request<T>(path, { method: 'DELETE' })
 // ============ 认证 ============
 export const authApi = {
   initStatus: () => get<InitStatus>('/api/auth/init-status'),
-  sendCode: (payload: { email: string; password?: string; purpose?: 'login' | 'init_admin'; turnstile_token: string }) =>
-    post<{ success: boolean; message: string; dev_code?: string }>('/api/auth/send-code', payload),
+  sendCode: (payload: {
+    email: string
+    password?: string
+    purpose?: 'login' | 'init_admin' | 'set_password'
+    turnstile_token: string
+  }) => post<{ success: boolean; message: string; dev_code?: string }>('/api/auth/send-code', payload),
   init: (payload: { email: string; password: string; name: string; turnstile_token: string; verify_code: string }) =>
     post<{ success: boolean; token: string; user: AuthUser }>('/api/auth/init', payload),
   verifyLogin: (payload: { email: string; password: string; verify_code: string }) =>
     post<{ success: boolean; token: string; user: AuthUser }>('/api/auth/verify-login', payload),
+  setupPassword: (payload: { email: string; password: string; verify_code: string }) =>
+    post<{ success: boolean; token: string; user: AuthUser }>('/api/auth/setup-password', payload),
   me: () => get<{ user: AuthUser }>('/api/auth/me'),
+}
+
+// ============ 个人中心 ============
+export interface ProfileUser {
+  id: number
+  email: string
+  name: string
+  role: 'super_admin' | 'user'
+  status: string
+  last_login_at: number | null
+  last_login_ip: string | null
+  created_at: number
+}
+
+export const profileApi = {
+  me: () => get<{ user: ProfileUser; password_set: boolean }>('/api/profile'),
+  update: (payload: { name?: string; email?: string; verify_code?: string }) =>
+    put<{ success: boolean; token?: string; user: ProfileUser }>('/api/profile', payload),
+  sendEmailCode: (email: string) =>
+    post<{ success: boolean; message: string; dev_code?: string }>('/api/profile/email-code', { email }),
+  updatePassword: (payload: { old_password?: string; new_password: string }) =>
+    put<{ success: boolean; password_set: boolean }>('/api/profile/password', payload),
 }
 
 // ============ 公开 ============
@@ -111,7 +142,7 @@ export const usersApi = {
     get<{ user: AuthUser; groups: { id: number; name: string; parent_id: number | null; group_role: string }[] }>(`/api/users/${id}`),
   create: (payload: {
     email: string
-    password: string
+    password?: string
     name: string
     role: 'super_admin' | 'user'
     require_review?: boolean
@@ -164,14 +195,18 @@ export const domainsApi = {
       success: boolean
       id: number
       domain: string
+      hosted_on_cloudflare?: boolean
       dns_config: { type: string; name: string; target: string; instructions: string }
     }>('/api/domains', payload),
+  workerHost: () => get<{ host: string; available: boolean }>('/api/domains/worker-host'),
   update: (
     id: number,
     payload: { type?: string; status?: string; is_default_short_link?: boolean },
   ) => put<{ success: boolean }>(`/api/domains/${id}`, payload),
   verify: (id: number) =>
-    post<{ success: boolean; verified: boolean; message: string }>(`/api/domains/${id}/verify`),
+    post<{ success: boolean; verified: boolean; message: string; worker_host?: string; hosted_on_cloudflare?: boolean }>(
+      `/api/domains/${id}/verify`,
+    ),
   remove: (id: number) => del<{ success: boolean }>(`/api/domains/${id}`),
 }
 
@@ -216,6 +251,7 @@ export const linksApi = {
       expires_at?: number | null
       redirect_type?: number
       group_id?: number | null
+      short_code?: string
     },
   ) => put<{ success: boolean }>(`/api/links/${id}`, payload),
   remove: (id: number) => del<{ success: boolean }>(`/api/links/${id}`),

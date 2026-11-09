@@ -38,7 +38,9 @@ export default function Domains() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
-  const [dnsInfo, setDnsInfo] = useState<{ domain: string; target: string } | null>(null)
+  const [dnsInfo, setDnsInfo] = useState<{ domain: string; target: string; hosted?: boolean } | null>(null)
+  // 本实例 Worker 的 workers.dev 域名，作为 CNAME 目标自动展示
+  const [workerHost, setWorkerHost] = useState('')
 
   // 删除确认
   const [deleting, setDeleting] = useState<Domain | null>(null)
@@ -48,8 +50,12 @@ export default function Domains() {
     setLoading(true)
     setError('')
     try {
-      const data = await domainsApi.list()
+      const [data, hostInfo] = await Promise.all([
+        domainsApi.list(),
+        domainsApi.workerHost().catch(() => ({ host: '', available: false })),
+      ])
       setDomains(data.domains)
+      setWorkerHost(hostInfo.host || '')
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -75,7 +81,11 @@ export default function Domains() {
         type: createForm.type as 'short_link' | 'admin' | 'both',
         is_default_short_link: createForm.is_default,
       })
-      setDnsInfo({ domain: result.domain, target: result.dns_config.target })
+      setDnsInfo({
+        domain: result.domain,
+        target: result.dns_config.target || workerHost,
+        hosted: result.hosted_on_cloudflare,
+      })
       setCreateOpen(false)
       setCreateForm({ domain: '', type: 'both', is_default: false })
       show('域名已添加，请按提示配置 DNS', 'success')
@@ -296,15 +306,27 @@ export default function Domains() {
       >
         {dnsInfo && (
           <div className="space-y-4 text-sm">
-            <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>
-                两种接入方式任选其一：
-                <br />① 在 Cloudflare DNS 添加下方 CNAME 记录；
-                <br />② 在 Worker → Settings → Domains &amp; Routes 直接绑定该域名（Cloudflare 自动生成代理记录，无需 CNAME）。
-                <br />配置完成后回到列表点击「验证」。
-              </span>
-            </div>
+            {dnsInfo.hosted === false ? (
+              <div className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  该域名的 DNS 不在 Cloudflare 托管：直接 CNAME 到 workers.dev 无法签发证书，HTTPS 会打不开。
+                  <br />① 推荐：把域名 NS 迁移到 Cloudflare，再到 Worker → Settings → Domains &amp; Routes 绑定；
+                  <br />② 或使用 Cloudflare for SaaS（Custom Hostnames）；
+                  <br />③ 也可以让第三方 CDN 回源到下方地址。
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  两种接入方式任选其一：
+                  <br />① 在 Worker → Settings → Domains &amp; Routes 直接绑定该域名（推荐，自动生成记录与证书）；
+                  <br />② 在 Cloudflare DNS 添加下方 CNAME 记录。
+                  <br />配置完成后回到列表点击「验证」。
+                </span>
+              </div>
+            )}
             <div className="space-y-2">
               <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700">
                 <span className="text-gray-500 dark:text-gray-400">记录类型</span>
@@ -317,7 +339,7 @@ export default function Domains() {
               <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700">
                 <span className="text-gray-500 dark:text-gray-400">目标</span>
                 <span className="break-all text-right font-mono">
-                  {dnsInfo.target || '在 Worker → Settings → Domains & Routes 查看'}
+                  {dnsInfo.target || workerHost || '未检测到（可在 wrangler.toml 配置 WORKER_HOST）'}
                 </span>
               </div>
             </div>
@@ -325,7 +347,8 @@ export default function Domains() {
               variant="outline"
               className="w-full"
               onClick={async () => {
-                const ok = await copyText(`CNAME ${dnsInfo.domain} -> ${dnsInfo.target || '<你的 Worker 域名>'}`)
+                const target = dnsInfo.target || workerHost
+                const ok = await copyText(`CNAME ${dnsInfo.domain} -> ${target}`)
                 show(ok ? '已复制配置' : '复制失败', ok ? 'success' : 'error')
               }}
             >

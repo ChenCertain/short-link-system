@@ -16,6 +16,7 @@ import Users from '@/pages/dashboard/Users'
 import Audit from '@/pages/dashboard/Audit'
 import Domains from '@/pages/dashboard/Domains'
 import Settings from '@/pages/dashboard/Settings'
+import Profile from '@/pages/dashboard/Profile'
 import NotFound from '@/pages/NotFound'
 
 export default function App() {
@@ -94,6 +95,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            <Route path="profile" element={<Profile />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  UserRound,
   Users,
   X,
 } from 'lucide-react'
@@ -40,6 +41,7 @@ const navItems: NavItem[] = [
   { to: '/dashboard/audit', label: '操作审计', icon: ScrollText, superOnly: true },
   { to: '/dashboard/domains', label: '域名管理', icon: Globe, superOnly: true },
   { to: '/dashboard/settings', label: '系统设置', icon: Settings, superOnly: true },
+  { to: '/dashboard/profile', label: '个人设置', icon: UserRound },
 ]
 
 function useDarkMode() {
@@ -138,12 +140,17 @@ export default function Layout() {
         </nav>
 
         <div className="border-t border-gray-100 p-3 dark:border-gray-800">
-          <div className="mb-2 px-2">
+          <Link
+            to="/dashboard/profile"
+            onClick={() => setMobileOpen(false)}
+            className="mb-2 block rounded-lg px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="个人设置"
+          >
             <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{user?.name}</p>
             <p className="truncate text-xs text-gray-500 dark:text-gray-400">
               {roleLabel} · {user?.email}
             </p>
-          </div>
+          </Link>
           <div className="flex gap-2">
             <button
               onClick={toggle}

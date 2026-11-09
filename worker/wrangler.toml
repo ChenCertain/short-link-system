@@ -36,6 +36,9 @@ SMTP_FROM = "noreply@chencertain.cn"
 # 本实例 Worker 的访问域名（不含协议），仅用于「域名管理」里的 DNS 指引
 # 可留空，留空时使用默认提示；部署后拿到 workers.dev 域名再填也可以
 PAGES_DOMAIN = ""
+# 本 Worker 的 workers.dev 域名（不含协议），「域名管理」会自动展示为 CNAME 目标
+# 留空时会自动取当前请求的 workers.dev 域名
+WORKER_HOST = ""
 
 # ============ 前端静态资源 ============
 # 前端构建产物目录（npm run build 会先生成 frontend/dist）

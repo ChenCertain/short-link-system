@@ -182,6 +182,8 @@ export interface UserItem {
   last_login_at?: number | null
   last_login_ip?: string | null
   created_at: number
+  /** 1=已设置密码，0=尚未设置（首次登录时自行设置） */
+  password_set?: number
 }
 
 export interface InitStatus {

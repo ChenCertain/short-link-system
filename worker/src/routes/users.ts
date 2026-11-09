@@ -20,7 +20,9 @@ users.get('/', requireRole('super_admin'), async (c) => {
   const offset = (page - 1) * pageSize;
 
   let query = `SELECT id, email, name, role, status, require_review, review_by,
-      last_login_at, last_login_ip, created_at FROM users`;
+      last_login_at, last_login_ip, created_at,
+      CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END AS password_set
+      FROM users`;
   let countQuery = 'SELECT COUNT(*) as total FROM users';
   const params: (string | number)[] = [];
 
@@ -46,17 +48,21 @@ users.get('/', requireRole('super_admin'), async (c) => {
 users.post('/', requireRole('super_admin'), async (c) => {
   const body = await c.req.json<{
     email: string;
-    password: string;
+    password?: string;
     name: string;
     role: 'super_admin' | 'user';
     require_review?: boolean;
     review_by?: 'auto' | 'super_admin';
   }>();
 
-  if (!body.email || !body.password || !body.name) {
-    return jsonResponse({ error: '请填写所有必填字段' }, 400);
+  const email = (body.email || '').trim().toLowerCase();
+  const name = (body.name || '').trim();
+  const password = body.password || '';
+
+  if (!email || !name) {
+    return jsonResponse({ error: '请填写邮箱和用户名' }, 400);
   }
-  if (body.password.length < 8) {
+  if (password && password.length < 8) {
     return jsonResponse({ error: '密码长度至少 8 位' }, 400);
   }
   if (!['super_admin', 'user'].includes(body.role)) {
@@ -64,19 +70,20 @@ users.post('/', requireRole('super_admin'), async (c) => {
   }
 
   // 检查邮箱是否已存在
-  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(body.email).first();
+  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
   if (existing) {
     return jsonResponse({ error: '该邮箱已被使用' }, 400);
   }
 
-  const passwordHash = await hashPassword(body.password);
+  // 密码可留空：留空时用户凭邮箱验证码在登录页自行设置（password_hash 为空串）
+  const passwordHash = password ? await hashPassword(password) : '';
   // 注册的用户默认需要审核（可显式关闭）
   const requireReview = body.require_review === false ? 0 : 1;
   const reviewBy = body.review_by === 'super_admin' ? 'super_admin' : 'auto';
 
   const result = await c.env.DB.prepare(
     'INSERT INTO users (email, password_hash, name, role, status, require_review, review_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(body.email, passwordHash, body.name, body.role, 'active', requireReview, reviewBy).run();
+  ).bind(email, passwordHash, name, body.role, 'active', requireReview, reviewBy).run();
 
   const userId = result.meta.last_row_id;
 
@@ -91,12 +98,13 @@ users.post('/', requireRole('super_admin'), async (c) => {
     success: true,
     user: {
       id: userId,
-      email: body.email,
-      name: body.name,
+      email,
+      name,
       role: body.role,
       status: 'active',
       require_review: requireReview,
       review_by: reviewBy,
+      password_set: password ? 1 : 0,
     },
   }, 201);
 });

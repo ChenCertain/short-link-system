@@ -138,7 +138,7 @@ auth.post('/init', async (c) => {
 auth.post('/send-code', async (c) => {
   const body = await c.req.json<{
     email: string;
-    purpose?: 'login' | 'init_admin';
+    purpose?: 'login' | 'init_admin' | 'set_password';
     turnstile_token: string;
     password?: string;
   }>();
@@ -168,6 +168,21 @@ auth.post('/send-code', async (c) => {
     if (initResult?.value === 'true') {
       return jsonResponse({ error: '系统已初始化' }, 400);
     }
+  } else if (purpose === 'set_password') {
+    // 首次设置密码场景：账户必须存在且尚未设置密码
+    const user = await c.env.DB.prepare(
+      'SELECT id, password_hash, status FROM users WHERE email = ?'
+    ).bind(body.email).first<{ id: number; password_hash: string | null; status: string }>();
+
+    if (!user) {
+      return jsonResponse({ error: '账户不存在，请联系管理员开通' }, 400);
+    }
+    if (user.status === 'disabled') {
+      return jsonResponse({ error: '账户已被禁用' }, 403);
+    }
+    if (user.password_hash) {
+      return jsonResponse({ error: '该账户已设置密码，请直接登录', code: 'PASSWORD_ALREADY_SET' }, 400);
+    }
   } else {
     // 登录场景：验证邮箱+密码
     if (!body.password) {
@@ -182,6 +197,12 @@ auth.post('/send-code', async (c) => {
     }
     if (user.status === 'disabled') {
       return jsonResponse({ error: '账户已被禁用' }, 403);
+    }
+    if (!user.password_hash) {
+      return jsonResponse(
+        { error: '该账户尚未设置密码，请先在登录页设置密码', code: 'PASSWORD_NOT_SET' },
+        400
+      );
     }
     const passwordValid = await verifyPassword(body.password, user.password_hash);
     if (!passwordValid) {
@@ -210,7 +231,12 @@ auth.post('/send-code', async (c) => {
 
   // 发送邮件
   const { sendVerificationEmail, isSmtpConfigured } = await import('../services/email');
-  const sent = await sendVerificationEmail(body.email, code, c.env);
+  const sent = await sendVerificationEmail(
+    body.email,
+    code,
+    c.env,
+    purpose === 'set_password' ? '短链接管理系统 - 设置登录密码' : undefined
+  );
   if (!sent) {
     return jsonResponse({ error: '邮件发送失败，请稍后重试' }, 500);
   }
@@ -257,6 +283,13 @@ auth.post('/verify-login', async (c) => {
     return jsonResponse({ error: '账户已被禁用' }, 403);
   }
 
+  if (!user.password_hash) {
+    return jsonResponse(
+      { error: '该账户尚未设置密码，请先在登录页设置密码', code: 'PASSWORD_NOT_SET' },
+      400
+    );
+  }
+
   const passwordValid = await verifyPassword(body.password, user.password_hash);
   if (!passwordValid) {
     return jsonResponse({ error: '邮箱或密码错误' }, 400);
@@ -292,6 +325,82 @@ auth.post('/verify-login', async (c) => {
   await logAudit(c.env.DB, c.env.KV, user.id, 'login', c.req.raw, undefined, undefined, JSON.stringify({ ip: loginIp }));
 
   // 管理中的项目组（登录后立即用于前端菜单权限渲染）
+  const managedGroupIds = role === 'super_admin' ? [] : await getManagedGroupIds(c.env.DB, user.id);
+
+  return jsonResponse({
+    success: true,
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role,
+      status: user.status,
+      managed_group_ids: managedGroupIds,
+    },
+  });
+});
+
+// ========== 首次设置密码 ==========
+// 管理员创建用户时可以不填密码，用户凭邮箱验证码在这里自行设置密码并直接登录
+auth.post('/setup-password', async (c) => {
+  const body = await c.req.json<{
+    email: string;
+    password: string;
+    verify_code: string;
+  }>();
+
+  if (!body.email || !body.password || !body.verify_code) {
+    return jsonResponse({ error: '请填写所有必填字段' }, 400);
+  }
+  if (body.password.length < 8) {
+    return jsonResponse({ error: '密码长度至少 8 位' }, 400);
+  }
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, password_hash, name, role, status FROM users WHERE email = ?'
+  ).bind(body.email).first<{
+    id: number;
+    email: string;
+    password_hash: string | null;
+    name: string;
+    role: string;
+    status: string;
+  }>();
+
+  if (!user) {
+    return jsonResponse({ error: '账户不存在，请联系管理员开通' }, 400);
+  }
+  if (user.status === 'disabled') {
+    return jsonResponse({ error: '账户已被禁用' }, 403);
+  }
+  if (user.password_hash) {
+    return jsonResponse({ error: '该账户已设置密码，请直接登录', code: 'PASSWORD_ALREADY_SET' }, 400);
+  }
+
+  const codeRecord = await c.env.DB.prepare(
+    "SELECT id, code FROM verification_codes WHERE email = ? AND purpose = 'set_password' AND used = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(body.email, Math.floor(Date.now() / 1000)).first<{ id: number; code: string }>();
+
+  if (!codeRecord || codeRecord.code !== body.verify_code) {
+    return jsonResponse({ error: '验证码错误或已过期' }, 400);
+  }
+
+  await c.env.DB.prepare('UPDATE verification_codes SET used = 1 WHERE id = ?').bind(codeRecord.id).run();
+
+  const passwordHash = await hashPassword(body.password);
+  const loginIp = getRequestIP(c.req.raw);
+  const loginAt = Math.floor(Date.now() / 1000);
+
+  await c.env.DB.prepare(
+    'UPDATE users SET password_hash = ?, last_login_at = ?, last_login_ip = ?, updated_at = ? WHERE id = ?'
+  ).bind(passwordHash, loginAt, loginIp, loginAt, user.id).run();
+
+  const role = user.role === 'super_admin' ? 'super_admin' : 'user';
+  const token = await signJWT({ user_id: user.id, email: user.email, role }, c.env.JWT_SECRET);
+
+  await logAudit(c.env.DB, c.env.KV, user.id, 'setup_password', c.req.raw, 'user', user.id);
+
   const managedGroupIds = role === 'super_admin' ? [] : await getManagedGroupIds(c.env.DB, user.id);
 
   return jsonResponse({
