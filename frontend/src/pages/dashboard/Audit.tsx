@@ -149,10 +149,13 @@ export default function Audit() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-xs">
                         <p className="font-mono text-gray-600 dark:text-gray-400">{log.ip || '-'}</p>
-                        {log.location && <p className="text-gray-400">{log.location}</p>}
+                        <p className="text-gray-400">{log.location || '未知归属地'}</p>
                       </td>
                       <td className="hidden max-w-[320px] px-4 py-3 xl:table-cell">
-                        <p className="truncate text-xs text-gray-500 dark:text-gray-400" title={log.detail || ''}>
+                        <p
+                          className="truncate text-xs text-gray-500 dark:text-gray-400"
+                          title={describeDetail(log.detail)}
+                        >
                           {describeDetail(log.detail)}
                         </p>
                       </td>

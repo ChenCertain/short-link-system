@@ -143,6 +143,8 @@ export function describeDetail(detail: string | null): string {
       return joined.length > 120 ? `${joined.slice(0, 120)}…` : joined || '-'
     }
     const parts = Object.entries(parsed as Record<string, unknown>)
+      // IP 已作为独立列展示，详情里不再重复
+      .filter(([key]) => key !== 'ip')
       .map(([key, value]) => {
         const formatted = formatValue(key, value)
         if (!formatted) return ''

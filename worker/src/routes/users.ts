@@ -577,12 +577,30 @@ users.get('/:id', async (c) => {
 
   const managedGroupIds = await getManagedGroupIds(c.env.DB, userId);
 
+  // 最后登录 IP 的归属地（取该用户该 IP 最近一条带归属地的审计记录）
+  const lastLoginIp = (user as unknown as { last_login_ip?: string | null }).last_login_ip;
+  let lastLoginLocation: string | null = null;
+  if (lastLoginIp) {
+    try {
+      const row = await c.env.DB.prepare(
+        `SELECT location FROM audit_logs WHERE user_id = ? AND ip = ? AND location IS NOT NULL
+         ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      )
+        .bind(userId, lastLoginIp)
+        .first<{ location: string }>();
+      lastLoginLocation = row?.location ?? null;
+    } catch {
+      // 迁移 0008 未执行时无归属地
+    }
+  }
+
   return jsonResponse({
     user: {
       ...user,
       role: user.role === 'super_admin' ? 'super_admin' : 'user',
       global_permissions: parsePermissionJson(user.permissions),
       managed_group_ids: managedGroupIds,
+      last_login_location: lastLoginLocation,
     },
     groups: groups.results.map((row) => ({
       ...row,
@@ -624,10 +642,17 @@ users.get('/:id/logs', async (c) => {
   }
   const where = ` WHERE ${conditions.join(' AND ')}`;
 
-  const rows = await c.env.DB.prepare(
-    `SELECT id, action, target_type, target_id, detail, ip, timestamp FROM audit_logs
-     ${where} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
-  ).bind(...params, pageSize, offset).all();
+  const logsSql = `SELECT id, action, target_type, target_id, detail, ip, location, timestamp FROM audit_logs
+     ${where} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`;
+  let rows: { results: unknown[] };
+  try {
+    rows = await c.env.DB.prepare(logsSql).bind(...params, pageSize, offset).all();
+  } catch {
+    // 迁移 0008 未执行时降级为不含归属地的查询
+    rows = await c.env.DB.prepare(logsSql.replace(', location,', ', NULL AS location,'))
+      .bind(...params, pageSize, offset)
+      .all();
+  }
 
   const total = await c.env.DB.prepare(`SELECT COUNT(*) as total FROM audit_logs${where}`)
     .bind(...params)

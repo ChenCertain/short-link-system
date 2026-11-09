@@ -149,7 +149,13 @@ export default function Groups() {
   const [memberCandidates, setMemberCandidates] = useState<{ id: number; name: string; email: string }[]>([])
 
   // 编辑成员身份
-  const [editingMember, setEditingMember] = useState<{ id: number; name: string; role: 'admin' | 'member' } | null>(null)
+  const [editingMember, setEditingMember] = useState<{
+    id: number
+    name: string
+    role: 'admin' | 'member'
+    /** 打开弹窗时的原始身份，用于判断是否真的发生变更 */
+    origin: 'admin' | 'member'
+  } | null>(null)
   const [savingRole, setSavingRole] = useState(false)
 
   // 成员资料概览（IP / 所在组 / 创建的短链）
@@ -285,7 +291,7 @@ export default function Groups() {
   // 快捷修改成员在组内的身份（成员 / 组管理员）
   const handleUpdateMemberRole = async () => {
     if (!selectedId || !editingMember) return
-    if (editingMember.role === editingMember.role) {
+    if (editingMember.role === editingMember.origin) {
       setEditingMember(null)
       return
     }
@@ -724,7 +730,9 @@ export default function Groups() {
                             )}
                             {canEditRole && (
                               <button
-                                onClick={() => setEditingMember({ id: m.id, name: m.name, role: m.group_role })}
+                                onClick={() =>
+                                  setEditingMember({ id: m.id, name: m.name, role: m.group_role, origin: m.group_role })
+                                }
                                 className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
                                 title="编辑成员身份"
                               >
@@ -1041,6 +1049,9 @@ export default function Groups() {
                 </p>
                 <p className="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">
                   IP：{memberOverview.user.last_login_ip || '-'}
+                  <span className="ml-2 font-sans text-gray-400">
+                    {memberOverview.user.last_login_location || '未知归属地'}
+                  </span>
                 </p>
               </div>
             </div>

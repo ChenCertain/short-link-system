@@ -819,8 +819,25 @@ groups.get('/:id/members/:userId/overview', async (c) => {
      ORDER BY sl.created_at DESC LIMIT 10`
   ).bind(userId, ...scopeParams).all();
 
+  // 最后登录 IP 的归属地（取该用户该 IP 最近一条带归属地的审计记录）
+  const lastLoginIp = (member as unknown as { last_login_ip?: string | null }).last_login_ip;
+  let lastLoginLocation: string | null = null;
+  if (lastLoginIp) {
+    try {
+      const row = await c.env.DB.prepare(
+        `SELECT location FROM audit_logs WHERE user_id = ? AND ip = ? AND location IS NOT NULL
+         ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      )
+        .bind(userId, lastLoginIp)
+        .first<{ location: string }>();
+      lastLoginLocation = row?.location ?? null;
+    } catch {
+      // 迁移 0008 未执行时无归属地
+    }
+  }
+
   return jsonResponse({
-    user: member,
+    user: { ...(member as Record<string, unknown>), last_login_location: lastLoginLocation },
     groups: groups.results.map((row) => ({ ...row, path: pathOf(row.id) || row.name })),
     link_summary: {
       total: summary?.total || 0,

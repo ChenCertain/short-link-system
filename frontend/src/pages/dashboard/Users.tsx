@@ -986,6 +986,9 @@ export default function Users() {
                     </p>
                     <p className="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">
                       IP：{detail.user.last_login_ip || '-'}
+                      <span className="ml-2 font-sans text-gray-400">
+                        {detail.user.last_login_location || '未知归属地'}
+                      </span>
                     </p>
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       注册于 {formatDateTime(detail.user.created_at)}
@@ -1038,7 +1041,7 @@ export default function Users() {
                       {detail.ips.map((item) => (
                         <li key={item.ip} className="flex items-center gap-2 px-3 py-2 text-xs">
                           <span className="font-mono text-gray-700 dark:text-gray-300">{item.ip}</span>
-                          {item.location && <span className="text-gray-400">{item.location}</span>}
+                          <span className="text-gray-400">{item.location || '未知归属地'}</span>
                           <span className="ml-auto text-gray-400">{item.count} 次</span>
                           <span className="text-gray-400">{formatDateTime(item.last_seen)}</span>
                         </li>
@@ -1189,9 +1192,9 @@ export default function Users() {
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
                             <span className="font-mono">{log.ip || '-'}</span>
-                            {log.location && <span>{log.location}</span>}
+                            <span>{log.location || '未知归属地'}</span>
                             {log.detail && (
-                              <span className="max-w-full truncate" title={log.detail}>
+                              <span className="max-w-full truncate" title={describeDetail(log.detail)}>
                                 {describeDetail(log.detail)}
                               </span>
                             )}

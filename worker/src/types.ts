@@ -95,6 +95,8 @@ export interface AuditLog {
   detail: string | null;
   ip: string | null;
   ip_hash: string | null;
+  /** IP 归属地（Cloudflare 边缘解析，迁移 0008 前为 null） */
+  location?: string | null;
   timestamp: number;
 }
 

@@ -214,6 +214,8 @@ export interface UserDetail {
     permissions?: string | null
     global_permissions?: PermissionMap
     managed_group_ids?: number[]
+    /** 最后登录 IP 的归属地 */
+    last_login_location?: string | null
   }
   groups: UserGroupItem[]
   link_summary: { total: number; active: number; clicks: number }
@@ -225,7 +227,11 @@ export interface UserDetail {
 
 /** 组成员概览（项目组管理员视角） */
 export interface MemberOverview {
-  user: UserItem & { last_login_ip?: string | null; last_login_at?: number | null }
+  user: UserItem & {
+    last_login_ip?: string | null
+    last_login_at?: number | null
+    last_login_location?: string | null
+  }
   groups: UserGroupItem[]
   link_summary: { total: number; active: number; clicks: number }
   links: (ShortLink & { group_name?: string | null })[]

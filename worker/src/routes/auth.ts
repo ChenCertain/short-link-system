@@ -334,8 +334,8 @@ auth.post('/verify-login', async (c) => {
     c.env.JWT_SECRET
   );
 
-  // 记录审计日志
-  await logAudit(c.env.DB, user.id, 'login', c.req.raw, undefined, undefined, JSON.stringify({ ip: loginIp }));
+  // 记录审计日志（IP / 归属地由审计表独立列承载，详情里不再重复记录 IP）
+  await logAudit(c.env.DB, user.id, 'login', c.req.raw, undefined, undefined);
 
   // 管理中的项目组（登录后立即用于前端菜单权限渲染）
   const managedGroupIds = role === 'super_admin' ? [] : await getManagedGroupIds(c.env.DB, user.id);

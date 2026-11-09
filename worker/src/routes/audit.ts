@@ -39,15 +39,22 @@ audit.get('/', requireGlobalPermission('audit.view'), async (c) => {
 
   const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
 
-  const list = await c.env.DB.prepare(
-    `SELECT al.id, al.user_id, al.action, al.target_type, al.target_id, al.detail,
-      al.ip, al.timestamp, u.email as user_email, u.name as user_name
+  const listSql = `SELECT al.id, al.user_id, al.action, al.target_type, al.target_id, al.detail,
+      al.ip, al.location, al.timestamp, u.email as user_email, u.name as user_name
      FROM audit_logs al
      LEFT JOIN users u ON al.user_id = u.id
      ${where}
      ORDER BY al.timestamp DESC, al.id DESC
-     LIMIT ? OFFSET ?`
-  ).bind(...params, pageSize, offset).all();
+     LIMIT ? OFFSET ?`;
+  let list: { results: unknown[] };
+  try {
+    list = await c.env.DB.prepare(listSql).bind(...params, pageSize, offset).all();
+  } catch {
+    // 迁移 0008 未执行时降级为不含归属地的查询
+    list = await c.env.DB.prepare(listSql.replace(', al.location', ', NULL AS location'))
+      .bind(...params, pageSize, offset)
+      .all();
+  }
 
   const countResult = await c.env.DB.prepare(
     `SELECT COUNT(*) as total FROM audit_logs al LEFT JOIN users u ON al.user_id = u.id${where}`
