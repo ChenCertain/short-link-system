@@ -62,7 +62,7 @@ npm install
 
 ### 2. 配置
 
-单实例：直接编辑 `worker/wrangler.toml`，填入 D1 数据库 ID、KV 命名空间 ID、Turnstile Site Key 与访问域名。
+单实例：直接编辑 `worker/wrangler.toml`，至少填入 D1 数据库 ID、KV 命名空间 ID；Turnstile Site Key 与访问域名可留空，之后再补。
 
 多实例 / Git 自动构建：仓库内配置保持留空，在每个 Cloudflare 项目里配置构建变量 `D1_DATABASE_ID`、`KV_NAMESPACE_ID`（必填），构建时执行 `npm run build:config` 生成本次实例专属配置，互不覆盖。`TURNSTILE_SITE_KEY`、`PAGES_DOMAIN`、`SMTP_*` 均可留空，Turnstile 留空时自动关闭人机验证。
 
