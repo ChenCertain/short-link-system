@@ -16,6 +16,7 @@ import {
   getGroupReviewerEmails,
   getSuperAdminEmails,
   hasGroupPermission,
+  filterGroupsWithPermission,
 } from '../permissions';
 
 const links = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
@@ -54,9 +55,16 @@ links.get('/', authMiddleware, async (c) => {
   const isSuperAdmin = currentUser.role === 'super_admin';
   let managedIds: number[] = [];
   if (!isSuperAdmin) {
-    // 普通用户 / 项目组管理员：自己创建的 + 可见项目组（所在组及子组、管理组及子组）的
+    // 普通用户 / 项目组管理员：自己创建的 + 具备「查看组内短链」权限的可见组（所在组及子组、管理组及子组）的
     managedIds = await expandManagedGroupIds(c.env.DB, currentUser.user_id);
-    visibleGroupIds = await getVisibleGroupIds(c.env.DB, currentUser.user_id);
+    const allVisibleGroupIds = await getVisibleGroupIds(c.env.DB, currentUser.user_id);
+    // 关闭「查看组内短链」后，组内他人短链不再出现在列表中
+    visibleGroupIds = await filterGroupsWithPermission(
+      c.env.DB,
+      currentUser.user_id,
+      allVisibleGroupIds,
+      'link.view.group',
+    );
     const groupPlaceholders = visibleGroupIds.length > 0
       ? ` OR sl.group_id IN (${visibleGroupIds.map(() => '?').join(',')})`
       : '';
@@ -130,7 +138,12 @@ links.get('/filter-options', authMiddleware, async (c) => {
   const isSuperAdmin = currentUser.role === 'super_admin';
 
   const visibleGroupIds = isSuperAdmin ? [] : await getVisibleGroupIds(c.env.DB, currentUser.user_id);
+  // 「查看组内短链」被关闭的组，其组内他人短链不参与筛选统计，避免泄露创建人信息
+  const readableGroupIds = isSuperAdmin
+    ? []
+    : await filterGroupsWithPermission(c.env.DB, currentUser.user_id, visibleGroupIds, 'link.view.group');
   const groupPlaceholders = visibleGroupIds.map(() => '?').join(',');
+  const readablePlaceholders = readableGroupIds.map(() => '?').join(',');
 
   // 项目组
   const groups = isSuperAdmin
@@ -171,9 +184,9 @@ links.get('/filter-options', authMiddleware, async (c) => {
         `SELECT DISTINCT u.id, u.name, u.email FROM short_links sl
          JOIN users u ON u.id = sl.created_by
          WHERE sl.created_by = ?
-           ${visibleGroupIds.length > 0 ? `OR sl.group_id IN (${groupPlaceholders})` : ''}
+           ${readableGroupIds.length > 0 ? `OR sl.group_id IN (${readablePlaceholders})` : ''}
          ORDER BY u.name LIMIT 500`
-      ).bind(currentUser.user_id, ...visibleGroupIds).all<{ id: number; name: string; email: string }>();
+         ).bind(currentUser.user_id, ...readableGroupIds).all<{ id: number; name: string; email: string }>();
 
   return jsonResponse({
     groups: groups.results,
@@ -511,6 +524,16 @@ links.get('/:id', authMiddleware, async (c) => {
   // 权限检查
   if (!await canAccessLink(c.env.DB, currentUser, link as { created_by: number; group_id: number | null })) {
     return jsonResponse({ error: '权限不足' }, 403);
+  }
+  // 组内他人短链：还需具备「查看组内短链」权限（管理员默认拥有，可被单独关闭）
+  const target = link as { created_by: number; group_id: number | null };
+  if (
+    currentUser.role !== 'super_admin' &&
+    target.created_by !== currentUser.user_id &&
+    target.group_id !== null &&
+    !(await hasGroupPermission(c.env.DB, currentUser.user_id, target.group_id, 'link.view.group'))
+  ) {
+    return jsonResponse({ error: '没有查看该短链的权限' }, 403);
   }
 
   return jsonResponse({ link });

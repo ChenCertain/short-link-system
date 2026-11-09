@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse, parseUserAgent } from '../utils';
 import { authMiddleware, requireRole } from '../middleware';
-import { isGroupAdminOf, isGroupMember } from '../permissions';
+import { hasGroupPermission, isGroupVisibleToUser } from '../permissions';
 
 const stats = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
@@ -82,14 +82,15 @@ stats.get('/link/:id', authMiddleware, async (c) => {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
 
-  // 权限检查：创建者 / 所属项目组成员 / 项目组管理员 / 超级管理员
+  // 权限检查：创建者 / 超级管理员直接放行；
+  // 组内他人短链需同时满足「组可见」与「查看短链数据」权限（管理员默认拥有，可被单独关闭）
   if (currentUser.role !== 'super_admin' && link.created_by !== currentUser.user_id) {
     const allowed = link.group_id
-      ? (await isGroupMember(c.env.DB, currentUser.user_id, link.group_id)) ||
-        (await isGroupAdminOf(c.env.DB, currentUser.user_id, link.group_id))
+      ? (await isGroupVisibleToUser(c.env.DB, currentUser.user_id, link.group_id)) &&
+        (await hasGroupPermission(c.env.DB, currentUser.user_id, link.group_id, 'link.view.data'))
       : false;
     if (!allowed) {
-      return jsonResponse({ error: '权限不足' }, 403);
+      return jsonResponse({ error: '没有查看该短链数据的权限，请联系项目组管理员' }, 403);
     }
   }
 

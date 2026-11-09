@@ -15,6 +15,7 @@ export const PERMISSION_DEFS: PermissionDef[] = [
   // ---- 短链 ----
   { key: 'link.create', label: '创建短链', description: '在组内创建短链', scope: 'group', category: '短链' },
   { key: 'link.view.group', label: '查看组内短链', description: '查看项目组内全部短链与详情', scope: 'group', category: '短链' },
+  { key: 'link.view.data', label: '查看短链数据', description: '查看组内短链的点击趋势、来源、地区与访问明细（含访问者 IP）', scope: 'group', category: '短链' },
   { key: 'link.update.own', label: '编辑自己的短链', description: '编辑自己创建的短链', scope: 'group', category: '短链' },
   { key: 'link.delete.own', label: '删除自己的短链', description: '删除自己创建的短链', scope: 'group', category: '短链' },
   { key: 'link.update.any', label: '编辑组内任意短链', description: '编辑组内他人创建的短链', scope: 'group', category: '短链' },

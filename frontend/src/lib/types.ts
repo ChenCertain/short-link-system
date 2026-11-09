@@ -124,6 +124,8 @@ export interface GroupDetail {
   is_super_admin: boolean
   /** 当前用户在该组的有效权限 */
   permissions?: PermissionMap
+  /** 是否可查看成员 IP / 权限明细（后端按权限裁剪） */
+  can_view_member_detail?: boolean
 }
 
 export interface AccessRecord {

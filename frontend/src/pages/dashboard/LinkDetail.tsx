@@ -43,6 +43,7 @@ export default function LinkDetail() {
   useEffect(() => {
     if (!linkId) return
     setLoading(true)
+    setError('')
     statsApi
       .link(linkId, days)
       .then(setData)
@@ -53,8 +54,19 @@ export default function LinkDetail() {
   if (loading && !data) return <LoadingBlock />
   if (error) {
     return (
-      <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-900/30 dark:text-red-300">
-        {error}
+      <div className="space-y-4">
+        <Link
+          to="/dashboard/links"
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回短链列表
+        </Link>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-200">
+          <p className="font-medium">无法查看该短链的数据</p>
+          <p className="mt-1 text-xs">{error}</p>
+          <p className="mt-1 text-xs">如需查看点击趋势与访问明细，请联系项目组管理员开启「查看短链数据」权限。</p>
+        </div>
       </div>
     )
   }

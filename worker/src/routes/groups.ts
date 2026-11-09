@@ -173,7 +173,20 @@ groups.get('/:id', async (c) => {
      JOIN users u ON ugr.user_id = u.id
      WHERE ugr.group_id = ?
      ORDER BY CASE ugr.role WHEN 'admin' THEN 0 ELSE 1 END, ugr.created_at ASC`;
-  type MemberRow = { id: number; group_role: 'admin' | 'member'; permissions_override: string | null };
+  type MemberRow = {
+    id: number;
+    email: string;
+    name: string | null;
+    role: string;
+    status: string;
+    last_login_ip: string | null;
+    last_login_at: number | null;
+    group_role: 'admin' | 'member';
+    joined_at: number;
+    permissions_override: string | null;
+    permissions_updated_at: number | null;
+    link_count: number;
+  };
   let members: { results: MemberRow[] };
   try {
     members = await c.env.DB.prepare(membersSql).bind(groupId).all<MemberRow>();
@@ -226,16 +239,28 @@ groups.get('/:id', async (c) => {
     'SELECT id, name, description FROM project_groups WHERE parent_id = ?'
   ).bind(groupId).all();
 
+  // 成员 IP / 生效权限属于敏感信息，仅对具备「配置成员权限」的用户开放
+  const canViewMemberDetail = isSuperAdmin || permissions['group.member.permission'] === true;
+  // 组内短链列表：没有「查看组内短链」权限时只能看到自己创建的
+  const canViewGroupLinks = isSuperAdmin || permissions['link.view.group'] === true;
+  const visibleLinks = canViewGroupLinks
+    ? links.results
+    : links.results.filter((row) => row.created_by === currentUser.user_id);
+
   return jsonResponse({
     group,
     members: members.results.map((member) => ({
       ...member,
-      permissions_override: parsePermissionJson(member.permissions_override),
-      permissions: memberPermissions[member.id] || {},
-      permission_role: memberPermissionRole[member.id] ?? member.group_role,
+      last_login_ip: canViewMemberDetail ? member.last_login_ip : null,
+      last_login_at: canViewMemberDetail ? member.last_login_at : null,
+      permissions_override: canViewMemberDetail ? parsePermissionJson(member.permissions_override) : {},
+      permissions: canViewMemberDetail ? memberPermissions[member.id] || {} : {},
+      permission_role: canViewMemberDetail
+        ? memberPermissionRole[member.id] ?? member.group_role
+        : member.group_role,
     })),
     domains: domains.results,
-    links: links.results.map((row) => {
+    links: visibleLinks.map((row) => {
       const own = row.created_by === currentUser.user_id;
       const canEditAny = isSuperAdmin || permissions['link.update.any'] === true;
       const canEditOwn = isSuperAdmin || permissions['link.update.own'] === true;
@@ -243,6 +268,8 @@ groups.get('/:id', async (c) => {
     }),
     subGroups: subGroups.results,
     can_manage: canManage,
+    // 是否可查看成员 IP / 权限明细（前端据此隐藏敏感信息）
+    can_view_member_detail: canViewMemberDetail,
     // 是否该组的「直接」管理员（用于前端区分同级管理员：同级之间不能互相改身份/权限/移除）
     is_direct_admin: !isSuperAdmin && (await isDirectGroupAdminOf(c.env.DB, currentUser.user_id, groupId)),
     permissions,
@@ -752,9 +779,13 @@ groups.get('/:id/members/:userId/overview', async (c) => {
     if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
       return jsonResponse({ error: '权限不足' }, 403);
     }
-    const allowed =
-      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.permission')) ||
-      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'link.view.group'));
+    // 成员资料包含最后登录 IP 等敏感信息，仅对具备「配置成员权限」的管理员开放
+    const allowed = await hasGroupPermission(
+      c.env.DB,
+      currentUser.user_id,
+      groupId,
+      'group.member.permission',
+    );
     if (!allowed) {
       return jsonResponse({ error: '你没有查看成员资料的权限' }, 403);
     }

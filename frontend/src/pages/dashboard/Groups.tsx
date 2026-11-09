@@ -402,6 +402,8 @@ export default function Groups() {
   const canRemoveMembers = isSuperAdmin || can(detail?.permissions, 'group.member.remove')
   const canSetMemberRole = isSuperAdmin || can(detail?.permissions, 'group.member.role')
   const canConfigMemberPerm = isSuperAdmin || can(detail?.permissions, 'group.member.permission')
+  // 成员 IP / 权限明细属于敏感信息：仅超管与具备「配置成员权限」的用户可见
+  const canViewMemberDetail = isSuperAdmin || detail?.can_view_member_detail === true || canConfigMemberPerm
   const canCreateChild = isSuperAdmin || can(detail?.permissions, 'group.create_child')
   const canManageDomain = isSuperAdmin || can(detail?.permissions, 'group.domain.manage')
   // 删除：超管可删任意组；组管理员只能删自己管理组下的子组（需「删除子组」权限）
@@ -700,25 +702,29 @@ export default function Groups() {
                             <p className="text-xs text-gray-500 dark:text-gray-400">
                               {ROLE_LABELS[m.role] || m.role}
                               {typeof m.link_count === 'number' ? ` · ${m.link_count} 条短链` : ''}
-                              {` · 已开启 ${enabledPerms} 项权限`}
+                              {canViewMemberDetail ? ` · 已开启 ${enabledPerms} 项权限` : ''}
                             </p>
-                            <p className="font-mono text-[11px] text-gray-400">
-                              IP：{m.last_login_ip || '-'}
-                              {m.last_login_at ? ` · ${formatDateTime(m.last_login_at)}` : ''}
-                            </p>
+                            {canViewMemberDetail && (
+                              <p className="font-mono text-[11px] text-gray-400">
+                                IP：{m.last_login_ip || '-'}
+                                {m.last_login_at ? ` · ${formatDateTime(m.last_login_at)}` : ''}
+                              </p>
+                            )}
                           </div>
                           <Badge tone={m.group_role === 'admin' ? 'purple' : 'gray'}>
                             {m.group_role === 'admin' ? '组管理员' : '成员'}
                           </Badge>
                           <StatusBadge status={m.status} />
                           <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => void openMemberOverview(m)}
-                              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
-                              title="查看成员资料（IP / 所在组 / 创建的短链）"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
+                            {canViewMemberDetail && (
+                              <button
+                                onClick={() => void openMemberOverview(m)}
+                                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                                title="查看成员资料（IP / 所在组 / 创建的短链）"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                            )}
                             {canEditPerm && (
                               <button
                                 onClick={() => openMemberPermissions(m)}
