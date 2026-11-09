@@ -248,7 +248,7 @@ groups.post('/', requireRole('super_admin'), async (c) => {
 
   const groupId = result.meta.last_row_id;
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'create_group', c.req.raw, 'group', groupId as number, JSON.stringify(body));
+  await logAudit(c.env.DB, currentUser.user_id, 'create_group', c.req.raw, 'group', groupId as number, JSON.stringify(body));
 
   return jsonResponse({ success: true, id: groupId }, 201);
 });
@@ -280,7 +280,7 @@ groups.put('/:id', requireRole('super_admin'), async (c) => {
 
   await c.env.DB.prepare(`UPDATE project_groups SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'update_group', c.req.raw, 'group', groupId, JSON.stringify(body));
+  await logAudit(c.env.DB, currentUser.user_id, 'update_group', c.req.raw, 'group', groupId, JSON.stringify(body));
 
   return jsonResponse({ success: true });
 });
@@ -297,7 +297,7 @@ groups.delete('/:id', requireRole('super_admin'), async (c) => {
 
   await c.env.DB.prepare('DELETE FROM project_groups WHERE id = ?').bind(groupId).run();
 
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'delete_group', c.req.raw, 'group', groupId);
+  await logAudit(c.env.DB, c.get('user').user_id, 'delete_group', c.req.raw, 'group', groupId);
 
   return jsonResponse({ success: true });
 });
@@ -385,7 +385,7 @@ groups.post('/:id/members', async (c) => {
     return jsonResponse({ error: '用户已在项目组中' }, 400);
   }
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'add_group_member', c.req.raw, 'group', groupId, JSON.stringify(body));
+  await logAudit(c.env.DB, currentUser.user_id, 'add_group_member', c.req.raw, 'group', groupId, JSON.stringify(body));
 
   return jsonResponse({ success: true });
 });
@@ -425,7 +425,6 @@ groups.put('/:id/members/:userId', async (c) => {
 
   await logAudit(
     c.env.DB,
-    c.env.KV,
     currentUser.user_id,
     'update_group_member_role',
     c.req.raw,
@@ -471,7 +470,7 @@ groups.delete('/:id/members/:userId', async (c) => {
 
   await c.env.DB.prepare('DELETE FROM user_group_relations WHERE user_id = ? AND group_id = ?').bind(userId, groupId).run();
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'remove_group_member', c.req.raw, 'group', groupId, JSON.stringify({ user_id: userId }));
+  await logAudit(c.env.DB, currentUser.user_id, 'remove_group_member', c.req.raw, 'group', groupId, JSON.stringify({ user_id: userId }));
 
   return jsonResponse({ success: true });
 });
@@ -502,7 +501,7 @@ groups.post('/:id/domains', requireRole('super_admin'), async (c) => {
     return jsonResponse({ error: '域名已绑定到该项目组' }, 400);
   }
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'bind_group_domain', c.req.raw, 'group', groupId, JSON.stringify(body));
+  await logAudit(c.env.DB, currentUser.user_id, 'bind_group_domain', c.req.raw, 'group', groupId, JSON.stringify(body));
 
   return jsonResponse({ success: true });
 });
@@ -518,7 +517,7 @@ groups.delete('/:id/domains/:domainId', requireRole('super_admin'), async (c) =>
 
   await c.env.DB.prepare('DELETE FROM group_domain_relations WHERE group_id = ? AND domain_id = ?').bind(groupId, domainId).run();
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'unbind_group_domain', c.req.raw, 'group', groupId, JSON.stringify({ domain_id: domainId }));
+  await logAudit(c.env.DB, currentUser.user_id, 'unbind_group_domain', c.req.raw, 'group', groupId, JSON.stringify({ domain_id: domainId }));
 
   return jsonResponse({ success: true });
 });

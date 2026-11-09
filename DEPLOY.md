@@ -122,6 +122,8 @@ npx wrangler d1 migrations apply short-link-db --remote --config wrangler.build.
 看到 `Migrations applied` 或 `✅` 就好了。
 
 > 每个实例都要在自己的库上跑一次；同一个实例以后升级只要再跑一次同样命令。
+>
+> 升级提示：`0006` 迁移会删除已废弃的「首页展示」相关字段（`is_displayed`、`display_order`）及其索引，执行后不可回滚，请确认没有旧版本的 Worker 仍在运行。
 
 ---
 

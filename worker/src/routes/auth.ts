@@ -123,7 +123,7 @@ auth.post('/init', async (c) => {
   ).bind(Math.floor(Date.now() / 1000)).run();
 
   // 记录审计日志
-  await logAudit(c.env.DB, c.env.KV, userId as number, 'init_admin', c.req.raw, 'system', undefined, JSON.stringify({ email: body.email }));
+  await logAudit(c.env.DB, userId as number, 'init_admin', c.req.raw, 'system', undefined, JSON.stringify({ email: body.email }));
 
   // 签发 JWT
   const token = await signJWT(
@@ -322,7 +322,7 @@ auth.post('/verify-login', async (c) => {
   );
 
   // 记录审计日志
-  await logAudit(c.env.DB, c.env.KV, user.id, 'login', c.req.raw, undefined, undefined, JSON.stringify({ ip: loginIp }));
+  await logAudit(c.env.DB, user.id, 'login', c.req.raw, undefined, undefined, JSON.stringify({ ip: loginIp }));
 
   // 管理中的项目组（登录后立即用于前端菜单权限渲染）
   const managedGroupIds = role === 'super_admin' ? [] : await getManagedGroupIds(c.env.DB, user.id);
@@ -399,7 +399,7 @@ auth.post('/setup-password', async (c) => {
   const role = user.role === 'super_admin' ? 'super_admin' : 'user';
   const token = await signJWT({ user_id: user.id, email: user.email, role }, c.env.JWT_SECRET);
 
-  await logAudit(c.env.DB, c.env.KV, user.id, 'setup_password', c.req.raw, 'user', user.id);
+  await logAudit(c.env.DB, user.id, 'setup_password', c.req.raw, 'user', user.id);
 
   const managedGroupIds = role === 'super_admin' ? [] : await getManagedGroupIds(c.env.DB, user.id);
 

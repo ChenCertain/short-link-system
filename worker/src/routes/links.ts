@@ -241,7 +241,7 @@ links.post('/:id/review', authMiddleware, async (c) => {
      WHERE id = ?`
   ).bind(approved ? 'approved' : 'rejected', note, currentUser.user_id, now, now, linkId).run();
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, approved ? 'approve_link' : 'reject_link', c.req.raw, 'link', linkId, JSON.stringify({ note }));
+  await logAudit(c.env.DB, currentUser.user_id, approved ? 'approve_link' : 'reject_link', c.req.raw, 'link', linkId, JSON.stringify({ note }));
 
   // 审核结果立即生效，清除跳转缓存
   c.executionCtx.waitUntil(invalidateLinkCache(c.env, link.short_code));
@@ -417,7 +417,7 @@ links.post('/', authMiddleware, async (c) => {
 
   const linkId = result.meta.last_row_id;
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'create_link', c.req.raw, 'link', linkId as number, JSON.stringify({ short_code: shortCode, target_url: body.target_url, review_status: reviewStatus, review_group_id: reviewGroupId }));
+  await logAudit(c.env.DB, currentUser.user_id, 'create_link', c.req.raw, 'link', linkId as number, JSON.stringify({ short_code: shortCode, target_url: body.target_url, review_status: reviewStatus, review_group_id: reviewGroupId }));
 
   // 待审核：邮件提醒对应的审核人（组管理员优先，否则超级管理员）
   if (requireReview) {
@@ -657,7 +657,6 @@ links.put('/:id', authMiddleware, async (c) => {
 
   await logAudit(
     c.env.DB,
-    c.env.KV,
     currentUser.user_id,
     resubmit ? 'resubmit_link' : 'update_link',
     c.req.raw,
@@ -729,7 +728,7 @@ links.delete('/:id', authMiddleware, async (c) => {
   // 删除后立即释放别名缓存
   c.executionCtx.waitUntil(invalidateLinkCache(c.env, link.short_code));
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'delete_link', c.req.raw, 'link', linkId);
+  await logAudit(c.env.DB, currentUser.user_id, 'delete_link', c.req.raw, 'link', linkId);
 
   return jsonResponse({ success: true });
 });
@@ -778,7 +777,7 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
       shortCode = generateShortCode(6);
     }
 
-    const result = await c.env.DB.prepare(
+    await c.env.DB.prepare(
       `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, created_by, domain_id)
        VALUES (?, ?, ?, ?, 'active', 302, ?, ?)`
     ).bind(shortCode, item.target_url, item.name || '', aliasInput || null, currentUser.user_id, defaultDomain?.id || null).run();
@@ -786,7 +785,7 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
     results.push({ success: true, short_code: shortCode, target_url: item.target_url });
   }
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'batch_import_links', c.req.raw, 'link', undefined, JSON.stringify({ count: body.links.length }));
+  await logAudit(c.env.DB, currentUser.user_id, 'batch_import_links', c.req.raw, 'link', undefined, JSON.stringify({ count: body.links.length }));
 
   return jsonResponse({ results });
 });

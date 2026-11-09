@@ -17,6 +17,26 @@ export function generateShortCode(length: number = 6): string {
 // 自定义别名（短码）长度上限
 export const ALIAS_MAX_LENGTH = 64;
 
+/** 规范化主机名：去协议、去路径、去端口，统一小写 */
+export function normalizeHost(value: string): string {
+  return (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '');
+}
+
+/** HTML 转义（用于拼接跳转页与邮件模板） */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // 别名允许：中文/字母/数字/下划线/短横线（不含 . / ? # 等会破坏路由的字符）
 const ALIAS_PATTERN = /^[\p{L}\p{N}_-]+$/u;
 

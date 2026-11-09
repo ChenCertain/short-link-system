@@ -149,7 +149,6 @@ profile.put('/', async (c) => {
 
   await logAudit(
     c.env.DB,
-    c.env.KV,
     user.id,
     newEmail ? 'change_email' : 'update_profile',
     c.req.raw,
@@ -264,7 +263,7 @@ profile.put('/password', async (c) => {
     .bind(hash, Math.floor(Date.now() / 1000), user.id)
     .run();
 
-  await logAudit(c.env.DB, c.env.KV, user.id, 'change_password', c.req.raw, 'user', user.id);
+  await logAudit(c.env.DB, user.id, 'change_password', c.req.raw, 'user', user.id);
 
   return jsonResponse({ success: true, password_set: true });
 });

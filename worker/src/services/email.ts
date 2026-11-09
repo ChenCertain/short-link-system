@@ -4,6 +4,7 @@
 
 import { connect } from 'cloudflare:sockets';
 import type { Env } from '../types';
+import { escapeHtml } from '../utils';
 
 const MAIL_SUBJECT = '短链接管理系统登陆/注册验证';
 
@@ -189,14 +190,6 @@ async function sendViaSMTP(env: SmtpEnv, from: string, to: string, mime: string)
 }
 
 // ========== 通用投递 ==========
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 async function deliver(
   env: SmtpEnv,

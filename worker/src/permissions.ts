@@ -40,15 +40,6 @@ export async function isGroupAdminOf(db: D1Database, userId: number, groupId: nu
   return false;
 }
 
-/** 用户是否为任意项目组的管理员 */
-export async function isAnyGroupAdmin(db: D1Database, userId: number): Promise<boolean> {
-  const row = await db
-    .prepare("SELECT id FROM user_group_relations WHERE user_id = ? AND role = 'admin' LIMIT 1")
-    .bind(userId)
-    .first();
-  return !!row;
-}
-
 /** 把一组项目组 id 展开为「自身 + 所有后代组」 */
 export async function expandGroupIdsWithDescendants(db: D1Database, rootIds: number[]): Promise<number[]> {
   if (rootIds.length === 0) return [];

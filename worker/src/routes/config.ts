@@ -46,7 +46,7 @@ config.put('/', requireRole('super_admin'), async (c) => {
     ).bind(key, value, now).run();
   }
 
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'update_config', c.req.raw, 'config', undefined, JSON.stringify(body));
+  await logAudit(c.env.DB, c.get('user').user_id, 'update_config', c.req.raw, 'config', undefined, JSON.stringify(body));
 
   return jsonResponse({ success: true });
 });

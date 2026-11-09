@@ -4,7 +4,6 @@ import {
   ChevronRight,
   FolderPlus,
   Globe,
-  Link2,
   Pencil,
   Plus,
   Search,
@@ -32,7 +31,7 @@ import {
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
+import { ROLE_LABELS } from '@/lib/utils'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 

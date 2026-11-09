@@ -2,7 +2,7 @@
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { jsonResponse } from '../utils';
+import { jsonResponse, normalizeHost } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
 import { getVisibleGroupIds, isGroupVisibleToUser } from '../permissions';
 import { invalidateLinkCache } from '../cache';
@@ -60,10 +60,6 @@ domains.get('/short-link-domains', async (c) => {
 });
 
 // ========== 本实例的 CNAME 目标地址 ==========
-
-function normalizeHost(input: string): string {
-  return input.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
-}
 
 /**
  * 推断本 Worker 的 workers.dev 主机名，作为用户需要配置的 CNAME 目标：
@@ -129,7 +125,7 @@ domains.post('/', requireRole('super_admin'), async (c) => {
     await c.env.DB.prepare('UPDATE domains SET is_default_short_link = 0 WHERE id != ?').bind(domainId).run();
   }
 
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'add_domain', c.req.raw, 'domain', domainId as number, JSON.stringify(body));
+  await logAudit(c.env.DB, c.get('user').user_id, 'add_domain', c.req.raw, 'domain', domainId as number, JSON.stringify(body));
 
   // 返回需要配置的 DNS 记录（CNAME 目标自动取本 Worker 的 workers.dev 域名）
   const workerHost = await resolveWorkerHost(c);
@@ -188,7 +184,7 @@ domains.put('/:id', requireRole('super_admin'), async (c) => {
     await c.env.DB.prepare('UPDATE domains SET is_default_short_link = 0 WHERE id != ?').bind(domainId).run();
   }
 
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'update_domain', c.req.raw, 'domain', domainId, JSON.stringify(body));
+  await logAudit(c.env.DB, c.get('user').user_id, 'update_domain', c.req.raw, 'domain', domainId, JSON.stringify(body));
 
   return jsonResponse({ success: true });
 });
@@ -352,7 +348,7 @@ domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
   if (result.verified) {
     await c.env.DB.prepare("UPDATE domains SET status = 'active', updated_at = ? WHERE id = ?")
       .bind(Math.floor(Date.now() / 1000), domainId).run();
-    await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'verify_domain', c.req.raw, 'domain', domainId, result.method || '');
+    await logAudit(c.env.DB, c.get('user').user_id, 'verify_domain', c.req.raw, 'domain', domainId, result.method || '');
     return jsonResponse({ success: true, verified: true, method: result.method, message: result.message });
   }
 
@@ -382,7 +378,7 @@ domains.delete('/:id', requireRole('super_admin'), async (c) => {
     );
   }
 
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'delete_domain', c.req.raw, 'domain', domainId);
+  await logAudit(c.env.DB, c.get('user').user_id, 'delete_domain', c.req.raw, 'domain', domainId);
 
   return jsonResponse({ success: true });
 });

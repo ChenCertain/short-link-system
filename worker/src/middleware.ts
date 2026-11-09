@@ -45,15 +45,9 @@ export function requireRole(...roles: UserRole[]) {
   });
 }
 
-// 登录用户快捷访问
-export function getCurrentUser(c: { var: { user?: JWTPayload } }): JWTPayload | null {
-  return c.var.user || null;
-}
-
 // 记录审计日志（同时记录明文 IP 与脱敏哈希）
 export async function logAudit(
   db: D1Database,
-  kv: KVNamespace,
   user_id: number | null,
   action: string,
   request: Request,

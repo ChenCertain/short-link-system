@@ -3,7 +3,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../types';
-import { getRequestIP, hashIP, RESERVED_CODES } from '../utils';
+import { escapeHtml, getRequestIP, hashIP, normalizeHost, RESERVED_CODES } from '../utils';
 import { fetchIndexHtml, serveStatic } from '../assets';
 import { LINK_CACHE_EDGE_TTL, LINK_CACHE_TTL, linkCacheKey } from '../cache';
 
@@ -11,15 +11,6 @@ const redirect = new Hono<{ Bindings: Env }>();
 
 // 保留路径：交给前端 SPA 处理，不作为短码解析（与自定义别名保留字保持一致）
 const RESERVED_PATHS = RESERVED_CODES;
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 // 统一的提示页面
 function noticePage(title: string, description: string, status: number): Response {
@@ -83,10 +74,6 @@ interface ShortLinkRow {
   review_note: string | null;
   domain_id: number | null;
   domain_name: string | null;
-}
-
-function normalizeHost(value: string): string {
-  return (value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
 }
 
 /** 按短码查询候选短链（只取跳转所需字段） */
@@ -159,9 +146,8 @@ async function resolveLinkByCode(
   return list.length === 1 ? list[0] : null;
 }
 
-/** 密码访问页面（替代原来的 JSON 响应） */
-function passwordPage(code: string, status = 401): Response {
-  const safeCode = escapeHtml(code);
+/** 密码访问页面（替代原来的 JSON 响应），短链编码由页面脚本从 location 中读取 */
+function passwordPage(status = 401): Response {
   const html = `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -331,7 +317,7 @@ redirect.get('/:code', async (c) => {
         });
       }
       // 浏览器访问：直接渲染密码输入页面
-      return passwordPage(code, 401);
+      return passwordPage(401);
     }
     const { verifyPassword } = await import('../utils');
     let password = '';
@@ -348,7 +334,7 @@ redirect.get('/:code', async (c) => {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      return passwordPage(code, 403);
+      return passwordPage(403);
     }
   }
 

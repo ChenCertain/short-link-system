@@ -87,7 +87,7 @@ users.post('/', requireRole('super_admin'), async (c) => {
 
   const userId = result.meta.last_row_id;
 
-  await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
+  await logAudit(c.env.DB, c.get('user').user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
     email: body.email,
     role: body.role,
     require_review: requireReview,
@@ -189,7 +189,7 @@ users.put('/:id', requireRole('super_admin'), async (c) => {
 
   await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'update_user', c.req.raw, 'user', userId, JSON.stringify(body));
+  await logAudit(c.env.DB, currentUser.user_id, 'update_user', c.req.raw, 'user', userId, JSON.stringify(body));
 
   return jsonResponse({ success: true });
 });
@@ -224,7 +224,7 @@ users.delete('/:id', requireRole('super_admin'), async (c) => {
     c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId),
   ]);
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'delete_user', c.req.raw, 'user', userId);
+  await logAudit(c.env.DB, currentUser.user_id, 'delete_user', c.req.raw, 'user', userId);
 
   return jsonResponse({ success: true });
 });
