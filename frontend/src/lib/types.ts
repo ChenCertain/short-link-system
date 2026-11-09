@@ -1,0 +1,191 @@
+export type UserRole = 'super_admin' | 'user'
+export type UserStatus = 'active' | 'disabled'
+export type ReviewStatus = 'approved' | 'pending' | 'rejected'
+export type ReviewBy = 'auto' | 'super_admin'
+
+export interface AuthUser {
+  id: number
+  email: string
+  name: string
+  role: UserRole
+  status: UserStatus
+  created_at?: number
+  require_review?: number
+  review_by?: ReviewBy
+  last_login_at?: number | null
+  last_login_ip?: string | null
+  /** 该用户作为管理员的项目组 id 列表（项目组管理员） */
+  managed_group_ids?: number[]
+}
+
+export interface ProjectGroup {
+  id: number
+  name: string
+  description: string | null
+  parent_id: number | null
+  created_by: number
+  created_at: number
+  updated_at: number
+  created_by_email?: string
+  member_count?: number
+  link_count?: number
+  my_role?: 'admin' | 'member'
+  children?: ProjectGroup[]
+}
+
+export interface GroupMember {
+  id: number
+  email: string
+  name: string
+  role: UserRole
+  status: UserStatus
+  group_role: 'admin' | 'member'
+  joined_at: number
+}
+
+export interface Domain {
+  id: number
+  domain: string
+  type: 'short_link' | 'admin' | 'both'
+  is_default_short_link: number
+  status: 'active' | 'disabled' | 'pending_verification'
+  added_by: number
+  created_at: number
+  updated_at: number
+  added_by_email?: string
+}
+
+export interface ShortLink {
+  id: number
+  short_code: string
+  target_url: string
+  name: string
+  custom_alias: string | null
+  status: 'active' | 'disabled' | 'expired'
+  redirect_type: number
+  created_by: number
+  group_id: number | null
+  domain_id: number | null
+  expires_at: number | null
+  click_count: number
+  is_displayed: number
+  display_order: number
+  created_at: number
+  updated_at: number
+  domain_name?: string | null
+  creator_name?: string
+  creator_email?: string
+  group_name?: string | null
+  review_status: ReviewStatus
+  review_note?: string | null
+  reviewed_by?: number | null
+  reviewed_at?: number | null
+  review_group_id?: number | null
+  /** 列表接口返回：当前用户是否有权修改/删除 */
+  can_manage?: boolean
+}
+
+// 待审核短链（审核列表使用）
+export interface ReviewLink extends ShortLink {
+  creator_name?: string
+  creator_email?: string
+  review_group_name?: string | null
+}
+
+// 项目组内短链（项目组详情中使用）
+export interface GroupLink {
+  id: number
+  short_code: string
+  target_url: string
+  name: string
+  status: string
+  review_status: ReviewStatus
+  click_count: number
+  created_at: number
+  expires_at: number | null
+  domain_name?: string | null
+  creator_name?: string
+  creator_email?: string
+}
+
+export interface GroupDetail {
+  group: ProjectGroup
+  members: GroupMember[]
+  domains: Domain[]
+  links: GroupLink[]
+  subGroups: { id: number; name: string; description: string | null }[]
+  can_manage: boolean
+  is_super_admin: boolean
+}
+
+export interface PublicLink {
+  id: number
+  name: string
+  status: string
+  click_count: number
+  created_at: number
+  short_url: string
+}
+
+export interface AccessRecord {
+  timestamp: number
+  ip: string | null
+  country: string | null
+  city: string | null
+  referer: string | null
+  user_agent: string | null
+}
+
+export interface LinkStats {
+  link: ShortLink
+  trend: { date: string; clicks: number }[]
+  referers: { referer: string; count: number }[]
+  countries: { country: string; count: number }[]
+  browsers: { name: string; count: number }[]
+  os: { name: string; count: number }[]
+  devices: { name: string; count: number }[]
+  recent?: AccessRecord[]
+}
+
+export interface OverviewStats {
+  total_links: number
+  active_links: number
+  disabled_links: number
+  expired_links: number
+  total_users: number
+  total_groups: number
+  today_clicks: number
+  total_clicks: number
+}
+
+export interface AuditLog {
+  id: number
+  user_id: number | null
+  user_email?: string | null
+  user_name?: string | null
+  action: string
+  target_type: string | null
+  target_id: number | null
+  detail: string | null
+  ip: string | null
+  timestamp: number
+}
+
+export interface UserItem {
+  id: number
+  email: string
+  name: string
+  role: UserRole
+  status: UserStatus
+  require_review?: number
+  review_by?: ReviewBy
+  last_login_at?: number | null
+  last_login_ip?: string | null
+  created_at: number
+}
+
+export interface InitStatus {
+  initialized: boolean
+  site_name: string
+  turnstile_site_key: string
+}

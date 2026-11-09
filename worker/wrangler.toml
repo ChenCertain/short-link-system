@@ -1,0 +1,42 @@
+# ==========================================================
+# 短链系统 - Cloudflare Workers 配置
+# 部署前请把下面带 REPLACE_ 的占位符替换为你自己的资源 ID / 密钥
+# 敏感信息（JWT_SECRET、TURNSTILE_SECRET_KEY、SMTP_PASS）建议在
+# Cloudflare Dashboard → Workers → Settings → Variables and Secrets
+# 中配置为 Secret，而不是写在这里
+# ==========================================================
+
+name = "short-link-system"
+compatibility_date = "2024-09-23"
+main = "src/index.ts"
+# 注意：数据库迁移目录在下方 [[d1_databases]] 中通过 migrations_dir 指定
+
+# ============ D1 数据库 ============
+# 创建命令: npx wrangler d1 create short-link-db
+[[d1_databases]]
+binding = "DB"
+database_name = "short-link-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "../migrations"
+
+# ============ KV 命名空间 ============
+# 创建命令: npx wrangler kv namespace create SHORT_LINK_KV
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# ============ 非敏感环境变量 ============
+[vars]
+TURNSTILE_SITE_KEY = "REPLACE_WITH_TURNSTILE_SITE_KEY"
+SMTP_HOST = "smtp.feishu.cn"
+SMTP_PORT = "465"
+SMTP_USER = "noreply@chencertain.cn"
+SMTP_FROM = "noreply@chencertain.cn"
+# 本实例对外访问域名（不含协议），用于短链地址展示与 DNS 配置指引
+PAGES_DOMAIN = "short-link-system.YOUR_SUBDOMAIN.workers.dev"
+
+# ============ 前端静态资源 ============
+# 前端构建产物目录（npm run build 会先生成 frontend/dist）
+[assets]
+directory = "../frontend/dist"
+binding = "ASSETS"
