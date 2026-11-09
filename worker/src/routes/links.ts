@@ -15,6 +15,7 @@ import {
   resolveReviewGroupId,
   getGroupReviewerEmails,
   getSuperAdminEmails,
+  hasGroupPermission,
 } from '../permissions';
 
 const links = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
@@ -199,13 +200,22 @@ links.get('/pending-reviews', authMiddleware, async (c) => {
   const params: (string | number)[] = [];
 
   if (currentUser.role !== 'super_admin') {
-    // 项目组管理员：只能审核分配给自己的组（含子组）的短链
+    // 可见范围：自己管理的组（含子组）+ 自己所在的组，再按「审核组内短链」权限过滤
     const managedIds = await expandManagedGroupIds(c.env.DB, currentUser.user_id);
-    if (managedIds.length === 0) {
+    const relations = await c.env.DB.prepare(
+      'SELECT group_id FROM user_group_relations WHERE user_id = ?'
+    ).bind(currentUser.user_id).all<{ group_id: number }>();
+    const candidates = new Set<number>([...managedIds, ...relations.results.map((r) => r.group_id)]);
+
+    const reviewIds: number[] = [];
+    for (const id of candidates) {
+      if (await hasGroupPermission(c.env.DB, currentUser.user_id, id, 'link.review')) reviewIds.push(id);
+    }
+    if (reviewIds.length === 0) {
       return jsonResponse({ links: [] });
     }
-    sql += ` AND sl.review_group_id IN (${managedIds.map(() => '?').join(',')})`;
-    params.push(...managedIds);
+    sql += ` AND sl.review_group_id IN (${reviewIds.map(() => '?').join(',')})`;
+    params.push(...reviewIds);
   }
 
   sql += ' ORDER BY sl.created_at ASC LIMIT 200';
@@ -229,11 +239,14 @@ links.post('/:id/review', authMiddleware, async (c) => {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
 
-  // 审核权限：超级管理员可审核全部（兜底）；组管理员只能审核分配给其管理组的短链
+  // 审核权限：超级管理员可审核全部（兜底）；其余用户需具备审核组的「审核组内短链」权限
   if (currentUser.role !== 'super_admin') {
     const managedIds = await expandManagedGroupIds(c.env.DB, currentUser.user_id);
     if (!link.review_group_id || !managedIds.includes(link.review_group_id)) {
       return jsonResponse({ error: '权限不足' }, 403);
+    }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, link.review_group_id, 'link.review'))) {
+      return jsonResponse({ error: '你没有审核短链的权限' }, 403);
     }
   }
   if (link.review_status !== 'pending') {
@@ -303,6 +316,11 @@ links.post('/', authMiddleware, async (c) => {
     if (currentUser.role !== 'super_admin' && !await isGroupMember(c.env.DB, currentUser.user_id, body.group_id)
       && !await isGroupAdminOf(c.env.DB, currentUser.user_id, body.group_id)) {
       return jsonResponse({ error: '您不在该项目组中' }, 403);
+    }
+    // 组内创建短链需要「创建短链」权限（可由组管理员按人配置）
+    if (currentUser.role !== 'super_admin'
+      && !(await hasGroupPermission(c.env.DB, currentUser.user_id, body.group_id, 'link.create'))) {
+      return jsonResponse({ error: '你没有在该项目组创建短链的权限' }, 403);
     }
   }
 
@@ -536,6 +554,10 @@ links.put('/:id', authMiddleware, async (c) => {
       && !await isGroupAdminOf(c.env.DB, currentUser.user_id, body.group_id)) {
       return jsonResponse({ error: '您不在该项目组中' }, 403);
     }
+    if (currentUser.role !== 'super_admin'
+      && !(await hasGroupPermission(c.env.DB, currentUser.user_id, body.group_id, 'link.create'))) {
+      return jsonResponse({ error: '你没有在该项目组创建短链的权限' }, 403);
+    }
 
     const available = await c.env.DB.prepare(
       `SELECT d.id FROM domains d
@@ -728,8 +750,8 @@ links.delete('/:id', authMiddleware, async (c) => {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
 
-  if (!await canManageLink(c.env.DB, currentUser, link)) {
-    return jsonResponse({ error: '权限不足，只有创建者或项目组管理员可以删除' }, 403);
+  if (!await canManageLink(c.env.DB, currentUser, link, 'delete')) {
+    return jsonResponse({ error: '权限不足，你没有删除该短链的权限' }, 403);
   }
 
   await c.env.DB.prepare('DELETE FROM short_links WHERE id = ?').bind(linkId).run();
@@ -862,12 +884,22 @@ async function canAccessLink(db: D1Database, user: JWTPayload, link: { created_b
   return false;
 }
 
-// 检查用户是否有权修改/删除短链（创建者 / 项目组管理员 / 超级管理员）
-async function canManageLink(db: D1Database, user: JWTPayload, link: { created_by: number; group_id: number | null }): Promise<boolean> {
+// 检查用户是否有权修改/删除短链
+// 个人短链：仅创建者本人
+// 项目组短链：创建者需「编辑/删除自己的短链」权限，其他人需「编辑/删除组内任意短链」权限
+async function canManageLink(
+  db: D1Database,
+  user: JWTPayload,
+  link: { created_by: number; group_id: number | null },
+  kind: 'update' | 'delete' = 'update',
+): Promise<boolean> {
   if (user.role === 'super_admin') return true;
-  if (link.created_by === user.user_id) return true;
-  if (link.group_id && await isGroupAdminOf(db, user.user_id, link.group_id)) return true;
-  return false;
+  const own = link.created_by === user.user_id;
+  if (!link.group_id) return own;
+  if (own && (await hasGroupPermission(db, user.user_id, link.group_id, kind === 'update' ? 'link.update.own' : 'link.delete.own'))) {
+    return true;
+  }
+  return hasGroupPermission(db, user.user_id, link.group_id, kind === 'update' ? 'link.update.any' : 'link.delete.any');
 }
 
 export default links;

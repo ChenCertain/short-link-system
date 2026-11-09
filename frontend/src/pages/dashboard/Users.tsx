@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { Eye, Pencil, Plus, Search, ShieldCheck, Trash2 } from 'lucide-react'
 import { usersApi } from '@/lib/api'
-import type { ReviewBy, UserItem, UserRole, UserStatus } from '@/lib/types'
+import type { AuditLog, PermissionMap, ReviewBy, ShortLink, UserDetail, UserItem, UserRole, UserStatus } from '@/lib/types'
 import {
   Badge,
   Button,
@@ -13,11 +13,16 @@ import {
   LoadingBlock,
   Modal,
   Select,
+  Spinner,
   StatusBadge,
 } from '@/components/ui'
+import { PermissionEditor } from '@/components/PermissionEditor'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
+import { GLOBAL_PERMISSION_DEFS } from '@/lib/permissions'
 import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
+
+type DetailTab = 'overview' | 'links' | 'logs' | 'permissions'
 
 const roleTone = (role: string) => (role === 'super_admin' ? 'purple' : 'gray') as 'purple' | 'gray'
 
@@ -74,6 +79,32 @@ export default function Users() {
   // 删除确认（不使用 window.confirm，兼容内嵌浏览器）
   const [deleting, setDeleting] = useState<UserItem | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
+
+  // ============ 用户详情 ============
+  const [detail, setDetail] = useState<UserDetail | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
+  const [tab, setTab] = useState<DetailTab>('overview')
+
+  // 详情内的短链分页
+  const [detailLinks, setDetailLinks] = useState<ShortLink[]>([])
+  const [linksTotal, setLinksTotal] = useState(0)
+  const [linksPage, setLinksPage] = useState(1)
+  const [linksLoading, setLinksLoading] = useState(false)
+
+  // 详情内的操作记录分页
+  const [detailLogs, setDetailLogs] = useState<AuditLog[]>([])
+  const [logsTotal, setLogsTotal] = useState(0)
+  const [logsPage, setLogsPage] = useState(1)
+  const [logsLoading, setLogsLoading] = useState(false)
+
+  // 全局权限编辑
+  const [permValue, setPermValue] = useState<PermissionMap>({})
+  const [permSaving, setPermSaving] = useState(false)
+
+  const isSuperAdmin = user?.role === 'super_admin'
+  const detailPageSize = 10
 
   const pageSize = 20
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -175,6 +206,77 @@ export default function Users() {
     }
   }
 
+  const loadDetailLinks = async (userId: number, targetPage: number) => {
+    setLinksLoading(true)
+    try {
+      const data = await usersApi.links(userId, { page: targetPage, pageSize: detailPageSize })
+      setDetailLinks(data.links)
+      setLinksTotal(data.total)
+      setLinksPage(data.page)
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setLinksLoading(false)
+    }
+  }
+
+  const loadDetailLogs = async (userId: number, targetPage: number) => {
+    setLogsLoading(true)
+    try {
+      const data = await usersApi.logs(userId, { page: targetPage, pageSize: detailPageSize })
+      setDetailLogs(data.logs)
+      setLogsTotal(data.total)
+      setLogsPage(data.page)
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setLogsLoading(false)
+    }
+  }
+
+  const openDetail = async (u: UserItem, initialTab: DetailTab = 'overview') => {
+    setDetailOpen(true)
+    setTab(initialTab)
+    setDetailLoading(true)
+    setDetailError('')
+    setDetail(null)
+    setDetailLinks([])
+    setDetailLogs([])
+    try {
+      const data = await usersApi.detail(u.id)
+      setDetail(data)
+      setPermValue(data.user.global_permissions || {})
+      if (initialTab === 'links') void loadDetailLinks(u.id, 1)
+      if (initialTab === 'logs') void loadDetailLogs(u.id, 1)
+    } catch (err) {
+      setDetailError((err as Error).message)
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  const switchTab = (next: DetailTab) => {
+    setTab(next)
+    if (!detail) return
+    if (next === 'links' && detailLinks.length === 0) void loadDetailLinks(detail.user.id, 1)
+    if (next === 'logs' && detailLogs.length === 0) void loadDetailLogs(detail.user.id, 1)
+  }
+
+  const handleSavePermissions = async () => {
+    if (!detail) return
+    setPermSaving(true)
+    try {
+      const data = await usersApi.updatePermissions(detail.user.id, permValue)
+      setPermValue(data.effective)
+      setDetail({ ...detail, user: { ...detail.user, global_permissions: data.permissions } })
+      show('权限已保存', 'success')
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setPermSaving(false)
+    }
+  }
+
   const handleDelete = async () => {
     if (!deleting) return
     setDeleteLoading(true)
@@ -251,8 +353,17 @@ export default function Users() {
                   {users.map((u) => (
                     <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900 dark:text-gray-100">{u.name}</p>
+                        <button
+                          onClick={() => void openDetail(u)}
+                          className="text-left font-medium text-gray-900 hover:text-brand-600 dark:text-gray-100 dark:hover:text-brand-400"
+                          title="查看用户详情"
+                        >
+                          {u.name}
+                        </button>
                         <p className="text-xs text-gray-500 dark:text-gray-400">{u.email}</p>
+                        <p className="mt-0.5 text-[11px] text-gray-400">
+                          {u.link_count ?? 0} 条短链 · {u.group_count ?? 0} 个项目组
+                        </p>
                       </td>
                       <td className="px-4 py-3">
                         <Badge tone={roleTone(u.role)}>{ROLE_LABELS[u.role] || u.role}</Badge>
@@ -283,6 +394,22 @@ export default function Users() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => void openDetail(u)}
+                            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                            title="查看详情 / 操作记录"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          {isSuperAdmin && (
+                            <button
+                              onClick={() => void openDetail(u, 'permissions')}
+                              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                              title="配置权限"
+                            >
+                              <ShieldCheck className="h-4 w-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => openEdit(u)}
                             className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
@@ -524,6 +651,349 @@ export default function Users() {
           </div>
           {editError && <ErrorText>{editError}</ErrorText>}
         </form>
+      </Modal>
+
+      {/* 用户详情 */}
+      <Modal
+        open={detailOpen}
+        onClose={() => {
+          setDetailOpen(false)
+          setDetail(null)
+        }}
+        title={detail ? `用户详情 · ${detail.user.name}` : '用户详情'}
+        wide
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDetailOpen(false)
+                setDetail(null)
+              }}
+            >
+              关闭
+            </Button>
+            {tab === 'permissions' && isSuperAdmin && detail && detail.user.role !== 'super_admin' && (
+              <Button onClick={handleSavePermissions} loading={permSaving}>
+                保存权限
+              </Button>
+            )}
+          </>
+        }
+      >
+        {detailLoading ? (
+          <LoadingBlock label="正在加载用户资料..." />
+        ) : detailError ? (
+          <ErrorText>{detailError}</ErrorText>
+        ) : detail ? (
+          <div className="space-y-4">
+            {/* 标签页 */}
+            <div className="flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+              {(
+                [
+                  ['overview', '概览'],
+                  ['links', '创建短链'],
+                  ['logs', '操作记录'],
+                  ['permissions', '权限配置'],
+                ] as [DetailTab, string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => switchTab(key)}
+                  className={
+                    tab === key
+                      ? 'flex-1 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-900 shadow-sm dark:bg-gray-900 dark:text-gray-100'
+                      : 'flex-1 rounded-md px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {tab === 'overview' && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">账号</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">{detail.user.email}</p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <Badge tone={roleTone(detail.user.role)}>
+                        {ROLE_LABELS[detail.user.role] || detail.user.role}
+                      </Badge>
+                      <StatusBadge status={detail.user.status === 'active' ? 'active' : 'disabled'} />
+                      {detail.user.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
+                      {!!detail.user.require_review && (
+                        <Badge tone="yellow">
+                          {detail.user.review_by === 'super_admin' ? '超管审核' : '需审核'}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">最后登录</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {detail.user.last_login_at ? formatDateTime(detail.user.last_login_at) : '从未登录'}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">
+                      IP：{detail.user.last_login_ip || '-'}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      注册于 {formatDateTime(detail.user.created_at)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: '创建短链', value: detail.link_summary.total },
+                    { label: '活跃短链', value: detail.link_summary.active },
+                    { label: '累计点击', value: detail.link_summary.clicks },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-lg bg-gray-50 p-3 text-center dark:bg-gray-800/60">
+                      <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{item.value || 0}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    所在项目组（{detail.groups.length}）
+                  </p>
+                  {detail.groups.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-gray-200 px-3 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                      该用户尚未加入任何项目组
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+                      {detail.groups.map((g) => (
+                        <li key={g.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                          <span className="flex-1 text-sm text-gray-900 dark:text-gray-100">{g.path}</span>
+                          <Badge tone={g.group_role === 'admin' ? 'purple' : 'gray'}>
+                            {g.group_role === 'admin' ? '组管理员' : '成员'}
+                          </Badge>
+                          <span className="text-[11px] text-gray-400">加入于 {formatDateTime(g.joined_at)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {detail.ips.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      操作 IP
+                    </p>
+                    <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+                      {detail.ips.map((item) => (
+                        <li key={item.ip} className="flex items-center gap-2 px-3 py-2 text-xs">
+                          <span className="flex-1 font-mono text-gray-700 dark:text-gray-300">{item.ip}</span>
+                          <span className="text-gray-400">{item.count} 次</span>
+                          <span className="text-gray-400">{formatDateTime(item.last_seen)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'links' && (
+              <div className="space-y-3">
+                {linksLoading ? (
+                  <LoadingBlock label="加载短链..." />
+                ) : detailLinks.length === 0 ? (
+                  <EmptyState title="暂无短链" description="该用户还没有创建短链" />
+                ) : (
+                  <>
+                    <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+                      <table className="w-full min-w-[520px] text-sm">
+                        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">短链</th>
+                            <th className="px-3 py-2 font-medium">目标链接</th>
+                            <th className="px-3 py-2 font-medium">项目组</th>
+                            <th className="px-3 py-2 font-medium">点击</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                          {detailLinks.map((l) => (
+                            <tr key={l.id}>
+                              <td className="px-3 py-2">
+                                <p className="font-medium text-brand-600 dark:text-brand-400">
+                                  {l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
+                                </p>
+                                <p className="truncate text-xs text-gray-500 dark:text-gray-400">{l.name || '（未命名）'}</p>
+                              </td>
+                              <td className="max-w-[180px] px-3 py-2">
+                                <span className="block truncate text-xs text-gray-600 dark:text-gray-400" title={l.target_url}>
+                                  {l.target_url}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                                {l.group_name || '个人'}
+                              </td>
+                              <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{l.click_count}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                      <span>
+                        共 {linksTotal} 条 · 第 {linksPage} / {Math.max(1, Math.ceil(linksTotal / detailPageSize))} 页
+                      </span>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={linksPage <= 1}
+                          onClick={() => void loadDetailLinks(detail.user.id, linksPage - 1)}
+                        >
+                          上一页
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={linksPage >= Math.ceil(linksTotal / detailPageSize)}
+                          onClick={() => void loadDetailLinks(detail.user.id, linksPage + 1)}
+                        >
+                          下一页
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {tab === 'logs' && (
+              <div className="space-y-3">
+                {logsLoading ? (
+                  <LoadingBlock label="加载操作记录..." />
+                ) : detailLogs.length === 0 ? (
+                  <EmptyState title="暂无操作记录" description="该用户还没有产生可审计的操作" />
+                ) : (
+                  <>
+                    <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+                      {detailLogs.map((log) => (
+                        <li key={log.id} className="px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                              {log.action}
+                            </span>
+                            {log.target_type && (
+                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                {log.target_type}
+                                {log.target_id ? `#${log.target_id}` : ''}
+                              </span>
+                            )}
+                            <span className="ml-auto text-[11px] text-gray-400">{formatDateTime(log.timestamp)}</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+                            <span className="font-mono">{log.ip || '-'}</span>
+                            {log.detail && (
+                              <span className="max-w-full truncate" title={log.detail}>
+                                {log.detail}
+                              </span>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                      <span>
+                        共 {logsTotal} 条 · 第 {logsPage} / {Math.max(1, Math.ceil(logsTotal / detailPageSize))} 页
+                      </span>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={logsPage <= 1}
+                          onClick={() => void loadDetailLogs(detail.user.id, logsPage - 1)}
+                        >
+                          上一页
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={logsPage >= Math.ceil(logsTotal / detailPageSize)}
+                          onClick={() => void loadDetailLogs(detail.user.id, logsPage + 1)}
+                        >
+                          下一页
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {tab === 'permissions' && (
+              <div className="space-y-3">
+                {detail.user.role === 'super_admin' ? (
+                  <p className="rounded-lg bg-purple-50 px-3 py-2 text-xs text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                    超级管理员默认拥有全部权限，无法单独收窄
+                  </p>
+                ) : !isSuperAdmin ? (
+                  <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
+                    只有超级管理员可以配置全局权限
+                  </p>
+                ) : (
+                  <>
+                    <PermissionEditor
+                      defs={GLOBAL_PERMISSION_DEFS}
+                      value={permValue}
+                      onChange={setPermValue}
+                      description="全局权限：用户管理与操作审计菜单的可见性与访问能力"
+                    />
+                    <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                      <span>重置为默认（普通用户默认无全局权限）</span>
+                      <Button variant="outline" size="sm" onClick={() => setPermValue({})}>
+                        恢复默认
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {detail.groups.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      组内权限
+                    </p>
+                    <div className="space-y-2">
+                      {detail.groups.map((g) => {
+                        const perms = g.group_permissions || {}
+                        const enabled = Object.keys(perms).filter((k) => perms[k])
+                        return (
+                          <div
+                            key={g.id}
+                            className="rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-800"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm text-gray-900 dark:text-gray-100">{g.path}</span>
+                              <Badge tone={g.group_role === 'admin' ? 'purple' : 'gray'}>
+                                {g.group_role === 'admin' ? '组管理员' : '成员'}
+                              </Badge>
+                              <span className="text-[11px] text-gray-400">已开启 {enabled.length} 项</span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                              组内权限请到「项目组 → 成员管理」中配置
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center justify-center py-8 text-gray-400">
+            <Spinner className="h-5 w-5" />
+          </div>
+        )}
       </Modal>
 
       {/* 删除确认 */}

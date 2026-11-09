@@ -1,12 +1,13 @@
 // 项目组路由（支持子组、域名分配、成员管理）
 //
 // 权限约定：
-// - 超级管理员：可创建/修改/删除任意项目组、添加成员、绑定域名
-// - 项目组管理员（user_group_relations.role = 'admin'）：可在自己管理的组下创建子组，
-//   可为子组绑定「自己管理范围内已绑定」的域名（父组已有的域名），
-//   可查看组内域名/成员/短链，可移除组内普通成员、审核组内短链；
-//   不能创建顶级项目组、不能授予管理员身份、不能解绑继承自父组的域名
-// - 普通成员：可查看自己所在项目组的信息与短链
+// - 超级管理员：拥有全部权限
+// - 项目组管理员（user_group_relations.role = 'admin'）：默认拥有该组全部组内权限，
+//   可在自己管理的组下创建子组、为子组绑定父组已有域名、添加/移除成员、
+//   设置子组管理员（授予 admin 身份）、为组内/子组成员单独配置权限；
+//   继承自父组的域名不能在子组解绑
+// - 普通成员：默认可创建短链、查看组内短链、编辑/删除自己的短链
+// - 以上默认值均可在「成员权限」中被单独覆盖（user_group_relations.permissions）
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
@@ -17,6 +18,12 @@ import {
   isGroupVisibleToUser,
   getManageableDomainIds,
   isDomainBoundToAncestor,
+  getGroupPermissions,
+  hasGroupPermission,
+  getManagedScopeIds,
+  parsePermissionJson,
+  buildPermissionMap,
+  GROUP_PERMISSION_KEYS,
 } from '../permissions';
 
 const groups = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
@@ -149,15 +156,41 @@ groups.get('/:id', async (c) => {
 
   const canManage = isSuperAdmin || await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId);
 
-  // 成员
-  const members = await c.env.DB.prepare(
-    `SELECT u.id, u.email, u.name, u.role, u.status,
-      ugr.role as group_role, ugr.created_at as joined_at
+  // 当前用户在该组的有效权限（前端据此显示按钮）
+  const permissions = isSuperAdmin
+    ? buildPermissionMap(GROUP_PERMISSION_KEYS, GROUP_PERMISSION_KEYS, {})
+    : await getGroupPermissions(c.env.DB, currentUser.user_id, groupId);
+
+  // 成员（附带最后登录 IP、组内权限覆盖项、组内短链数量）
+  const membersSql = `SELECT u.id, u.email, u.name, u.role, u.status, u.last_login_ip, u.last_login_at,
+      ugr.role as group_role, ugr.created_at as joined_at,
+      ugr.permissions as permissions_override, ugr.permissions_updated_at,
+      (SELECT COUNT(*) FROM short_links WHERE created_by = u.id AND group_id = ugr.group_id) AS link_count
      FROM user_group_relations ugr
      JOIN users u ON ugr.user_id = u.id
      WHERE ugr.group_id = ?
-     ORDER BY CASE ugr.role WHEN 'admin' THEN 0 ELSE 1 END, ugr.created_at ASC`
-  ).bind(groupId).all();
+     ORDER BY CASE ugr.role WHEN 'admin' THEN 0 ELSE 1 END, ugr.created_at ASC`;
+  type MemberRow = { id: number; group_role: 'admin' | 'member'; permissions_override: string | null };
+  let members: { results: MemberRow[] };
+  try {
+    members = await c.env.DB.prepare(membersSql).bind(groupId).all<MemberRow>();
+  } catch {
+    // 迁移未执行（permissions 列不存在）时降级
+    members = await c.env.DB.prepare(
+      membersSql.replace(
+        'ugr.permissions as permissions_override, ugr.permissions_updated_at',
+        'NULL AS permissions_override, NULL AS permissions_updated_at',
+      ),
+    ).bind(groupId).all<MemberRow>();
+  }
+
+  // 每个成员在该组的有效权限（用于前端显示与配置弹窗初始值）
+  const memberPermissions: Record<number, Record<string, boolean>> = {};
+  if (canManage) {
+    for (const member of members.results) {
+      memberPermissions[member.id] = await getGroupPermissions(c.env.DB, member.id, groupId);
+    }
+  }
 
   // 项目组可用域名（短链类型且启用）
   const domains = await c.env.DB.prepare(
@@ -190,14 +223,21 @@ groups.get('/:id', async (c) => {
 
   return jsonResponse({
     group,
-    members: members.results,
-    domains: domains.results,
-    links: links.results.map((row) => ({
-      ...row,
-      can_manage: canManage || row.created_by === currentUser.user_id,
+    members: members.results.map((member) => ({
+      ...member,
+      permissions_override: parsePermissionJson(member.permissions_override),
+      permissions: memberPermissions[member.id] || {},
     })),
+    domains: domains.results,
+    links: links.results.map((row) => {
+      const own = row.created_by === currentUser.user_id;
+      const canEditAny = isSuperAdmin || permissions['link.update.any'] === true;
+      const canEditOwn = isSuperAdmin || permissions['link.update.own'] === true;
+      return { ...row, can_manage: canEditAny || (own && canEditOwn) };
+    }),
     subGroups: subGroups.results,
     can_manage: canManage,
+    permissions,
     is_super_admin: isSuperAdmin,
   });
 });
@@ -246,8 +286,13 @@ groups.get('/:id/bindable-domains', async (c) => {
     return jsonResponse({ error: '项目组不存在' }, 404);
   }
 
-  if (!isSuperAdmin && !(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
-    return jsonResponse({ error: '权限不足，只有项目组管理员可以绑定域名' }, 403);
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足，只有项目组管理员可以绑定域名' }, 403);
+    }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.domain.manage'))) {
+      return jsonResponse({ error: '你没有管理组域名的权限' }, 403);
+    }
   }
 
   // 已绑定到该组的域名不再返回
@@ -308,6 +353,9 @@ groups.post('/', async (c) => {
     }
     if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, body.parent_id))) {
       return jsonResponse({ error: '只能在自己管理的项目组下创建子组' }, 403);
+    }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, body.parent_id, 'group.create_child'))) {
+      return jsonResponse({ error: '你没有在该项目组下创建子组的权限' }, 403);
     }
   }
 
@@ -428,6 +476,9 @@ groups.post('/:id/members', async (c) => {
   if (!isSuperAdmin && !isGroupAdmin) {
     return jsonResponse({ error: '权限不足，只有超级管理员或项目组管理员可以添加成员' }, 403);
   }
+  if (!isSuperAdmin && !(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.add'))) {
+    return jsonResponse({ error: '你没有添加成员的权限' }, 403);
+  }
 
   if (!body.user_id) {
     return jsonResponse({ error: '请指定用户' }, 400);
@@ -443,8 +494,13 @@ groups.post('/:id/members', async (c) => {
     return jsonResponse({ error: '用户不存在' }, 404);
   }
 
-  // 项目组管理员只能添加普通成员，管理员身份需由超级管理员授予
-  const role = isSuperAdmin && body.role === 'admin' ? 'admin' : 'member';
+  // 组管理员默认只能添加普通成员；拥有「设置成员身份」权限时可以直接添加子组管理员
+  const canGrantAdmin =
+    isSuperAdmin || (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.role'));
+  if (body.role === 'admin' && !canGrantAdmin) {
+    return jsonResponse({ error: '你没有设置组管理员的权限' }, 403);
+  }
+  const role: 'admin' | 'member' = body.role === 'admin' ? 'admin' : 'member';
 
   try {
     await c.env.DB.prepare(
@@ -468,8 +524,18 @@ groups.put('/:id/members/:userId', async (c) => {
   }
 
   const currentUser = c.get('user');
-  if (currentUser.role !== 'super_admin') {
-    return jsonResponse({ error: '权限不足，成员身份需由超级管理员调整' }, 403);
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足，只有超级管理员或项目组管理员可以调整成员身份' }, 403);
+    }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.role'))) {
+      return jsonResponse({ error: '你没有设置成员身份的权限' }, 403);
+    }
+    if (userId === currentUser.user_id) {
+      return jsonResponse({ error: '不能修改自己的组内身份' }, 400);
+    }
   }
 
   const body = await c.req.json<{ role?: 'admin' | 'member' }>();
@@ -482,6 +548,16 @@ groups.put('/:id/members/:userId', async (c) => {
   ).bind(userId, groupId).first<{ role: string }>();
   if (!target) {
     return jsonResponse({ error: '该用户不在项目组中' }, 404);
+  }
+
+  // 同级组管理员不能互相降权，需由上级管理员或超级管理员处理
+  if (!isSuperAdmin && target.role === 'admin' && body.role === 'member') {
+    const direct = await c.env.DB.prepare(
+      'SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?'
+    ).bind(currentUser.user_id, groupId).first<{ role: string }>();
+    if (direct?.role === 'admin') {
+      return jsonResponse({ error: '同级组管理员身份需要由上级管理员或超级管理员调整' }, 403);
+    }
   }
 
   if (target.role === body.role) {
@@ -518,6 +594,9 @@ groups.delete('/:id/members/:userId', async (c) => {
 
   if (!isSuperAdmin && !isGroupAdmin) {
     return jsonResponse({ error: '权限不足' }, 403);
+  }
+  if (!isSuperAdmin && !(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.remove'))) {
+    return jsonResponse({ error: '你没有移除成员的权限' }, 403);
   }
 
   // 不能移除自己
@@ -565,6 +644,9 @@ groups.post('/:id/domains', async (c) => {
     if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
       return jsonResponse({ error: '权限不足，只有项目组管理员可以绑定域名' }, 403);
     }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.domain.manage'))) {
+      return jsonResponse({ error: '你没有管理组域名的权限' }, 403);
+    }
     // 只能复用自己管理范围内已绑定的域名，不能凭空绑定全站域名
     const allowedIds = await getManageableDomainIds(c.env.DB, currentUser.user_id);
     if (!allowedIds.includes(body.domain_id)) {
@@ -606,6 +688,9 @@ groups.delete('/:id/domains/:domainId', async (c) => {
     if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
       return jsonResponse({ error: '权限不足，只有项目组管理员可以解绑域名' }, 403);
     }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.domain.manage'))) {
+      return jsonResponse({ error: '你没有管理组域名的权限' }, 403);
+    }
     // 继承自父组的域名由父组统一管理，子组管理员不能直接移除
     if (await isDomainBoundToAncestor(c.env.DB, groupId, domainId)) {
       return jsonResponse({ error: '该域名继承自父组，请在父组解除绑定' }, 403);
@@ -617,6 +702,211 @@ groups.delete('/:id/domains/:domainId', async (c) => {
   await logAudit(c.env.DB, currentUser.user_id, 'unbind_group_domain', c.req.raw, 'group', groupId, JSON.stringify({ domain_id: domainId }));
 
   return jsonResponse({ success: true });
+});
+
+// ========== 成员资料概览（超级管理员，或该项目组管理员） ==========
+groups.get('/:id/members/:userId/overview', async (c) => {
+  const groupId = parseInt(c.req.param('id'));
+  const userId = parseInt(c.req.param('userId'));
+  if (!Number.isFinite(groupId) || !Number.isFinite(userId)) {
+    return jsonResponse({ error: '无效的 ID' }, 400);
+  }
+  const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足' }, 403);
+    }
+    const allowed =
+      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.permission')) ||
+      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'link.view.group'));
+    if (!allowed) {
+      return jsonResponse({ error: '你没有查看成员资料的权限' }, 403);
+    }
+  }
+
+  const member = await c.env.DB.prepare(
+    `SELECT u.id, u.email, u.name, u.role, u.status, u.last_login_ip, u.last_login_at, u.created_at,
+      ugr.role as group_role, ugr.created_at as joined_at
+     FROM user_group_relations ugr
+     JOIN users u ON ugr.user_id = u.id
+     WHERE ugr.group_id = ? AND ugr.user_id = ?`
+  ).bind(groupId, userId).first();
+
+  if (!member) {
+    return jsonResponse({ error: '该用户不在项目组中' }, 404);
+  }
+
+  // 可见范围：超管为全部组，组管理员为自己管理的组及子组
+  const scopeIds = isSuperAdmin ? null : await getManagedScopeIds(c.env.DB, currentUser.user_id);
+  const scopePlaceholders = scopeIds ? scopeIds.map(() => '?').join(',') : '';
+  const scopeFilter = scopeIds ? ` AND pg.id IN (${scopePlaceholders})` : '';
+  const scopeParams: number[] = scopeIds || [];
+
+  const groups = await c.env.DB.prepare(
+    `SELECT pg.id, pg.name, pg.parent_id, ugr.role as group_role, ugr.created_at as joined_at
+     FROM user_group_relations ugr
+     JOIN project_groups pg ON ugr.group_id = pg.id
+     WHERE ugr.user_id = ?${scopeFilter}
+     ORDER BY pg.id ASC`
+  ).bind(userId, ...scopeParams).all<{ id: number; name: string; parent_id: number | null }>();
+
+  // 组路径
+  const allGroups = await c.env.DB.prepare('SELECT id, name, parent_id FROM project_groups').all<{
+    id: number;
+    name: string;
+    parent_id: number | null;
+  }>();
+  const groupMap = new Map(allGroups.results.map((g) => [g.id, g]));
+  const pathOf = (id: number, depth = 0): string => {
+    const row = groupMap.get(id);
+    if (!row || depth > 20) return '';
+    const parent = row.parent_id ? pathOf(row.parent_id, depth + 1) : '';
+    return parent ? `${parent} / ${row.name}` : row.name;
+  };
+
+  const summary = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total,
+      SUM(CASE WHEN sl.status = 'active' THEN 1 ELSE 0 END) as active,
+      SUM(sl.click_count) as clicks
+     FROM short_links sl
+     JOIN project_groups pg ON sl.group_id = pg.id
+     WHERE sl.created_by = ?${scopeFilter}`
+  ).bind(userId, ...scopeParams).first<{ total: number; active: number; clicks: number }>();
+
+  const links = await c.env.DB.prepare(
+    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.click_count, sl.created_at,
+      sl.group_id, d.domain as domain_name, pg.name as group_name
+     FROM short_links sl
+     JOIN project_groups pg ON sl.group_id = pg.id
+     LEFT JOIN domains d ON sl.domain_id = d.id
+     WHERE sl.created_by = ?${scopeFilter}
+     ORDER BY sl.created_at DESC LIMIT 10`
+  ).bind(userId, ...scopeParams).all();
+
+  return jsonResponse({
+    user: member,
+    groups: groups.results.map((row) => ({ ...row, path: pathOf(row.id) || row.name })),
+    link_summary: {
+      total: summary?.total || 0,
+      active: summary?.active || 0,
+      clicks: summary?.clicks || 0,
+    },
+    links: links.results,
+    scope_group_ids: scopeIds,
+  });
+});
+
+// ========== 成员在管理范围内创建的短链（分页） ==========
+groups.get('/:id/members/:userId/links', async (c) => {
+  const groupId = parseInt(c.req.param('id'));
+  const userId = parseInt(c.req.param('userId'));
+  if (!Number.isFinite(groupId) || !Number.isFinite(userId)) {
+    return jsonResponse({ error: '无效的 ID' }, 400);
+  }
+  const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足' }, 403);
+    }
+    const allowed =
+      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.permission')) ||
+      (await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'link.view.group'));
+    if (!allowed) {
+      return jsonResponse({ error: '你没有查看成员短链的权限' }, 403);
+    }
+  }
+
+  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const offset = (page - 1) * pageSize;
+
+  const scopeIds = isSuperAdmin ? null : await getManagedScopeIds(c.env.DB, currentUser.user_id);
+  if (scopeIds && scopeIds.length === 0) {
+    return jsonResponse({ links: [], total: 0, page, pageSize });
+  }
+  const scopeFilter = scopeIds ? ` AND pg.id IN (${scopeIds.map(() => '?').join(',')})` : '';
+  const scopeParams: number[] = scopeIds || [];
+
+  const rows = await c.env.DB.prepare(
+    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.click_count, sl.created_at,
+      sl.group_id, d.domain as domain_name, pg.name as group_name
+     FROM short_links sl
+     JOIN project_groups pg ON sl.group_id = pg.id
+     LEFT JOIN domains d ON sl.domain_id = d.id
+     WHERE sl.created_by = ?${scopeFilter}
+     ORDER BY sl.created_at DESC LIMIT ? OFFSET ?`
+  ).bind(userId, ...scopeParams, pageSize, offset).all();
+
+  const total = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total FROM short_links sl JOIN project_groups pg ON sl.group_id = pg.id
+     WHERE sl.created_by = ?${scopeFilter}`
+  ).bind(userId, ...scopeParams).first<{ total: number }>();
+
+  return jsonResponse({
+    links: rows.results,
+    total: total?.total || 0,
+    page,
+    pageSize,
+  });
+});
+
+// ========== 配置成员在该组的权限（超级管理员，或具备 group.member.permission 的组管理员） ==========
+groups.put('/:id/members/:userId/permissions', async (c) => {
+  const groupId = parseInt(c.req.param('id'));
+  const userId = parseInt(c.req.param('userId'));
+  if (!Number.isFinite(groupId) || !Number.isFinite(userId)) {
+    return jsonResponse({ error: '无效的 ID' }, 400);
+  }
+  const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  if (!isSuperAdmin) {
+    if (!(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+      return jsonResponse({ error: '权限不足' }, 403);
+    }
+    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, groupId, 'group.member.permission'))) {
+      return jsonResponse({ error: '你没有配置成员权限的权限' }, 403);
+    }
+    if (userId === currentUser.user_id) {
+      return jsonResponse({ error: '不能修改自己的权限' }, 400);
+    }
+  }
+
+  const body = await c.req.json<{ permissions?: Record<string, boolean> }>();
+  const incoming = body.permissions || {};
+
+  const target = await c.env.DB.prepare(
+    'SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?'
+  ).bind(userId, groupId).first<{ role: string }>();
+  if (!target) {
+    return jsonResponse({ error: '该用户不在项目组中' }, 404);
+  }
+
+  const overrides: Record<string, boolean> = {};
+  for (const key of GROUP_PERMISSION_KEYS) {
+    if (incoming[key] !== undefined) overrides[key] = incoming[key] === true;
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE user_group_relations SET permissions = ?, permissions_updated_at = ? WHERE user_id = ? AND group_id = ?'
+  ).bind(JSON.stringify(overrides), Math.floor(Date.now() / 1000), userId, groupId).run();
+
+  await logAudit(
+    c.env.DB,
+    currentUser.user_id,
+    'update_group_member_permissions',
+    c.req.raw,
+    'group',
+    groupId,
+    JSON.stringify({ user_id: userId, permissions: overrides }),
+  );
+
+  const effective = await getGroupPermissions(c.env.DB, userId, groupId);
+  return jsonResponse({ success: true, permissions: overrides, effective });
 });
 
 export default groups;

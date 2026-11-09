@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ScrollText } from 'lucide-react'
 import { auditApi } from '@/lib/api'
 import type { AuditLog } from '@/lib/types'
-import { Badge, Button, Card, EmptyState, ErrorText, LoadingBlock, Select } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, ErrorText, Input, LoadingBlock, Select } from '@/components/ui'
 import { formatDateTime } from '@/lib/utils'
 
 const ACTION_LABELS: Record<string, string> = {
@@ -23,6 +23,9 @@ const ACTION_LABELS: Record<string, string> = {
   delete_group: '删除项目组',
   add_group_member: '添加组成员',
   remove_group_member: '移除组成员',
+  update_group_member_role: '调整组成员身份',
+  update_group_member_permissions: '配置组成员权限',
+  update_user_permissions: '配置用户全局权限',
   bind_group_domain: '绑定项目组域名',
   unbind_group_domain: '解绑项目组域名',
   add_domain: '添加域名',
@@ -56,6 +59,8 @@ export default function Audit() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [action, setAction] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [appliedKeyword, setAppliedKeyword] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -66,7 +71,7 @@ export default function Audit() {
     setLoading(true)
     setError('')
     try {
-      const data = await auditApi.list({ page, pageSize, action })
+      const data = await auditApi.list({ page, pageSize, action, keyword: appliedKeyword })
       setLogs(data.logs)
       setTotal(data.total)
     } catch (err) {
@@ -74,7 +79,7 @@ export default function Audit() {
     } finally {
       setLoading(false)
     }
-  }, [page, action])
+  }, [page, action, appliedKeyword])
 
   useEffect(() => {
     void load()
@@ -112,6 +117,39 @@ export default function Audit() {
               </option>
             ))}
           </Select>
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setPage(1)
+              setAppliedKeyword(keyword.trim())
+            }}
+          >
+            <Input
+              className="w-56"
+              placeholder="搜索操作人姓名 / 邮箱 / IP"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              autoComplete="off"
+            />
+            <Button type="submit" variant="outline" size="sm">
+              搜索
+            </Button>
+            {appliedKeyword && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setKeyword('')
+                  setAppliedKeyword('')
+                  setPage(1)
+                }}
+              >
+                清除
+              </Button>
+            )}
+          </form>
           <span className="text-xs text-gray-400">记录登录、短链、项目组、域名与系统配置等敏感操作</span>
         </div>
 

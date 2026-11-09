@@ -1,27 +1,68 @@
-// 用户管理路由（仅超级管理员可访问）
+// 用户管理路由
+// 访问控制：超级管理员，或被授予全局权限 `user.manage` 的账号
 // 项目组管理员不具备全局用户管理权限，只能在项目组内管理成员。
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse, hashPassword } from '../utils';
-import { authMiddleware, requireRole, logAudit } from '../middleware';
-import { getManagedGroupIds } from '../permissions';
+import { authMiddleware, requireGlobalPermission, logAudit } from '../middleware';
+import {
+  GLOBAL_PERMISSION_KEYS,
+  getGlobalPermissions,
+  getManagedGroupIds,
+  hasGlobalPermission,
+  parsePermissionJson,
+} from '../permissions';
 
 const users = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
 // 所有路由需要登录
 users.use('*', authMiddleware);
 
-// ========== 获取用户列表（仅超级管理员） ==========
-users.get('/', requireRole('super_admin'), async (c) => {
+/** 当前登录用户能否查看目标用户的完整资料（本人 / 超级管理员 / 拥有 user.manage） */
+async function canViewUser(db: D1Database, user: JWTPayload, targetId: number): Promise<boolean> {
+  if (user.user_id === targetId) return true;
+  if (user.role === 'super_admin') return true;
+  return hasGlobalPermission(db, user.user_id, 'user.manage');
+}
+
+/** 把扁平的组列表拼成「父组 / 子组」路径 */
+async function loadGroupPaths(db: D1Database): Promise<Map<number, string>> {
+  const rows = await db.prepare('SELECT id, name, parent_id FROM project_groups').all<{
+    id: number;
+    name: string;
+    parent_id: number | null;
+  }>();
+  const byId = new Map(rows.results.map((row) => [row.id, row]));
+  const cache = new Map<number, string>();
+
+  const build = (id: number, depth = 0): string => {
+    const cached = cache.get(id);
+    if (cached) return cached;
+    const row = byId.get(id);
+    if (!row || depth > 20) return '';
+    const parent = row.parent_id ? build(row.parent_id, depth + 1) : '';
+    const path = parent ? `${parent} / ${row.name}` : row.name;
+    cache.set(id, path);
+    return path;
+  };
+
+  for (const row of rows.results) build(row.id);
+  return cache;
+}
+
+// ========== 获取用户列表 ==========
+users.get('/', requireGlobalPermission('user.manage'), async (c) => {
   const page = Math.max(1, parseInt(c.req.query('page') || '1'));
   const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
   const search = c.req.query('search') || '';
   const offset = (page - 1) * pageSize;
 
-  let query = `SELECT id, email, name, role, status, require_review, review_by,
+  let query = `SELECT id, email, name, role, status, require_review, review_by, permissions,
       last_login_at, last_login_ip, created_at,
-      CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END AS password_set
+      CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END AS password_set,
+      (SELECT COUNT(*) FROM short_links WHERE created_by = users.id) AS link_count,
+      (SELECT COUNT(*) FROM user_group_relations WHERE user_id = users.id) AS group_count
       FROM users`;
   let countQuery = 'SELECT COUNT(*) as total FROM users';
   const params: (string | number)[] = [];
@@ -33,19 +74,36 @@ users.get('/', requireRole('super_admin'), async (c) => {
   }
 
   query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-  const list = await c.env.DB.prepare(query).bind(...params, pageSize, offset).all<{ id: number; role: string }>();
+  let list: { results: { id: number; role: string; permissions: string | null }[] };
+  try {
+    list = await c.env.DB.prepare(query).bind(...params, pageSize, offset).all<{
+      id: number;
+      role: string;
+      permissions: string | null;
+    }>();
+  } catch {
+    // 迁移未执行（users.permissions 不存在）时降级
+    list = await c.env.DB.prepare(query.replace('review_by, permissions,', 'review_by, NULL AS permissions,'))
+      .bind(...params, pageSize, offset)
+      .all<{ id: number; role: string; permissions: string | null }>();
+  }
   const countResult = await c.env.DB.prepare(countQuery).bind(...params).first<{ total: number }>();
 
   return jsonResponse({
-    users: list.results.map((u) => ({ ...u, role: u.role === 'super_admin' ? 'super_admin' : 'user' })),
+    users: list.results.map((u) => ({
+      ...u,
+      role: u.role === 'super_admin' ? 'super_admin' : 'user',
+      global_permissions: parsePermissionJson(u.permissions),
+    })),
     total: countResult?.total || 0,
     page,
     pageSize,
   });
 });
 
-// ========== 创建用户（仅超级管理员） ==========
-users.post('/', requireRole('super_admin'), async (c) => {
+// ========== 创建用户（仅超级管理员可创建超级管理员） ==========
+users.post('/', requireGlobalPermission('user.manage'), async (c) => {
+  const currentUser = c.get('user');
   const body = await c.req.json<{
     email: string;
     password?: string;
@@ -68,6 +126,10 @@ users.post('/', requireRole('super_admin'), async (c) => {
   if (!['super_admin', 'user'].includes(body.role)) {
     return jsonResponse({ error: '无效的角色' }, 400);
   }
+  // 超级管理员身份只能由超级管理员授予
+  if (body.role === 'super_admin' && currentUser.role !== 'super_admin') {
+    return jsonResponse({ error: '只有超级管理员可以创建超级管理员' }, 403);
+  }
 
   // 检查邮箱是否已存在
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
@@ -87,7 +149,7 @@ users.post('/', requireRole('super_admin'), async (c) => {
 
   const userId = result.meta.last_row_id;
 
-  await logAudit(c.env.DB, c.get('user').user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
+  await logAudit(c.env.DB, currentUser.user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
     email: body.email,
     role: body.role,
     require_review: requireReview,
@@ -109,8 +171,8 @@ users.post('/', requireRole('super_admin'), async (c) => {
   }, 201);
 });
 
-// ========== 更新用户（仅超级管理员） ==========
-users.put('/:id', requireRole('super_admin'), async (c) => {
+// ========== 更新用户 ==========
+users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
   const userId = parseInt(c.req.param('id'));
   if (!Number.isFinite(userId)) return jsonResponse({ error: '无效的用户 ID' }, 400);
 
@@ -130,6 +192,10 @@ users.put('/:id', requireRole('super_admin'), async (c) => {
   }
   if (body.role && !['super_admin', 'user'].includes(body.role)) {
     return jsonResponse({ error: '无效的角色' }, 400);
+  }
+  // 角色调整仅超级管理员可执行，避免 user.manage 授权者自我提权
+  if (body.role && body.role !== user.role && currentUser.role !== 'super_admin') {
+    return jsonResponse({ error: '只有超级管理员可以调整用户角色' }, 403);
   }
 
   // 不允许禁用自己的账户
@@ -194,8 +260,49 @@ users.put('/:id', requireRole('super_admin'), async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 删除用户（仅超级管理员） ==========
-users.delete('/:id', requireRole('super_admin'), async (c) => {
+// ========== 配置用户的全局权限（仅超级管理员） ==========
+users.put('/:id/permissions', async (c) => {
+  const targetId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(targetId)) return jsonResponse({ error: '无效的用户 ID' }, 400);
+  const currentUser = c.get('user');
+  if (currentUser.role !== 'super_admin') {
+    return jsonResponse({ error: '只有超级管理员可以配置全局权限' }, 403);
+  }
+
+  const body = await c.req.json<{ permissions?: Record<string, boolean> }>();
+  const incoming = body.permissions || {};
+
+  const overrides: Record<string, boolean> = {};
+  for (const key of GLOBAL_PERMISSION_KEYS) {
+    if (incoming[key] !== undefined) overrides[key] = incoming[key] === true;
+  }
+
+  const target = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(targetId).first<{ role: string }>();
+  if (!target) return jsonResponse({ error: '用户不存在' }, 404);
+  if (target.role === 'super_admin' && Object.values(overrides).some((v) => v === false)) {
+    return jsonResponse({ error: '超级管理员始终拥有全部全局权限' }, 400);
+  }
+
+  await c.env.DB.prepare('UPDATE users SET permissions = ?, updated_at = ? WHERE id = ?')
+    .bind(JSON.stringify(overrides), Math.floor(Date.now() / 1000), targetId)
+    .run();
+
+  await logAudit(
+    c.env.DB,
+    currentUser.user_id,
+    'update_user_permissions',
+    c.req.raw,
+    'user',
+    targetId,
+    JSON.stringify(overrides),
+  );
+
+  const effective = await getGlobalPermissions(c.env.DB, targetId);
+  return jsonResponse({ success: true, permissions: overrides, effective });
+});
+
+// ========== 删除用户 ==========
+users.delete('/:id', requireGlobalPermission('user.manage'), async (c) => {
   const userId = parseInt(c.req.param('id'));
   if (!Number.isFinite(userId)) return jsonResponse({ error: '无效的用户 ID' }, 400);
   const currentUser = c.get('user');
@@ -229,39 +336,187 @@ users.delete('/:id', requireRole('super_admin'), async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 获取用户详情（本人或超级管理员） ==========
+// ========== 用户详情：基本信息 + 所在组 + 短链概览 + 操作记录 + 登录 IP ==========
 users.get('/:id', async (c) => {
   const userId = parseInt(c.req.param('id'));
   if (!Number.isFinite(userId)) return jsonResponse({ error: '无效的用户 ID' }, 400);
   const currentUser = c.get('user');
 
-  // 普通用户只能查看自己
-  if (currentUser.role !== 'super_admin' && currentUser.user_id !== userId) {
+  if (!(await canViewUser(c.env.DB, currentUser, userId))) {
     return jsonResponse({ error: '权限不足' }, 403);
   }
 
-  const user = await c.env.DB.prepare(
-    `SELECT id, email, name, role, status, require_review, review_by,
-      last_login_at, last_login_ip, created_at FROM users WHERE id = ?`
-  ).bind(userId).first<{ id: number; role: string }>();
+  const detailSql = `SELECT id, email, name, role, status, require_review, review_by, permissions,
+      last_login_at, last_login_ip, created_at, updated_at,
+      CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END AS password_set
+     FROM users WHERE id = ?`;
+  let user: { id: number; role: string; permissions: string | null } | null = null;
+  try {
+    user = await c.env.DB.prepare(detailSql).bind(userId).first<{ id: number; role: string; permissions: string | null }>();
+  } catch {
+    // 迁移未执行（users.permissions 不存在）时降级
+    user = await c.env.DB.prepare(detailSql.replace('review_by, permissions,', 'review_by, NULL AS permissions,'))
+      .bind(userId)
+      .first<{ id: number; role: string; permissions: string | null }>();
+  }
 
   if (!user) {
     return jsonResponse({ error: '用户不存在' }, 404);
   }
 
-  // 获取用户所在的项目组
-  const groups = await c.env.DB.prepare(
-    `SELECT pg.id, pg.name, pg.parent_id, ugr.role as group_role
+  // 所在项目组（含继承关系产生的可见组不在此列，只展示直接加入的组）
+  const groupsSql = `SELECT pg.id, pg.name, pg.parent_id, ugr.role as group_role, ugr.created_at as joined_at,
+      ugr.permissions as group_permissions, ugr.permissions_updated_at
      FROM user_group_relations ugr
      JOIN project_groups pg ON ugr.group_id = pg.id
-     WHERE ugr.user_id = ?`
+     WHERE ugr.user_id = ?
+     ORDER BY pg.id ASC`;
+  let groups: { results: { id: number; name: string; group_permissions: string | null }[] } = { results: [] };
+  try {
+    groups = await c.env.DB.prepare(groupsSql).bind(userId).all<{
+      id: number;
+      name: string;
+      group_permissions: string | null;
+    }>();
+  } catch {
+    groups = await c.env.DB.prepare(
+      groupsSql.replace(
+        'ugr.permissions as group_permissions, ugr.permissions_updated_at',
+        'NULL AS group_permissions, NULL AS permissions_updated_at',
+      ),
+    ).bind(userId).all<{ id: number; name: string; group_permissions: string | null }>();
+  }
+
+  const paths = await loadGroupPaths(c.env.DB);
+
+  const linkSummary = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total,
+      SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+      SUM(click_count) as clicks
+     FROM short_links WHERE created_by = ?`
+  ).bind(userId).first<{ total: number; active: number; clicks: number }>();
+
+  const links = await c.env.DB.prepare(
+    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.click_count, sl.created_at,
+      sl.group_id, d.domain as domain_name, pg.name as group_name
+     FROM short_links sl
+     LEFT JOIN domains d ON sl.domain_id = d.id
+     LEFT JOIN project_groups pg ON sl.group_id = pg.id
+     WHERE sl.created_by = ?
+     ORDER BY sl.created_at DESC LIMIT 10`
+  ).bind(userId).all();
+
+  const logs = await c.env.DB.prepare(
+    `SELECT id, action, target_type, target_id, detail, ip, timestamp
+     FROM audit_logs WHERE user_id = ?
+     ORDER BY timestamp DESC, id DESC LIMIT 20`
+  ).bind(userId).all();
+
+  const ips = await c.env.DB.prepare(
+    `SELECT ip, COUNT(*) as count, MAX(timestamp) as last_seen
+     FROM audit_logs WHERE user_id = ? AND ip IS NOT NULL AND ip <> ''
+     GROUP BY ip ORDER BY last_seen DESC LIMIT 10`
   ).bind(userId).all();
 
   const managedGroupIds = await getManagedGroupIds(c.env.DB, userId);
 
   return jsonResponse({
-    user: { ...user, role: user.role === 'super_admin' ? 'super_admin' : 'user', managed_group_ids: managedGroupIds },
-    groups: groups.results,
+    user: {
+      ...user,
+      role: user.role === 'super_admin' ? 'super_admin' : 'user',
+      global_permissions: parsePermissionJson(user.permissions),
+      managed_group_ids: managedGroupIds,
+    },
+    groups: groups.results.map((row) => ({
+      ...row,
+      group_permissions: parsePermissionJson(row.group_permissions),
+      path: paths.get(row.id) || row.name,
+    })),
+    link_summary: {
+      total: linkSummary?.total || 0,
+      active: linkSummary?.active || 0,
+      clicks: linkSummary?.clicks || 0,
+    },
+    links: links.results,
+    logs: logs.results,
+    ips: ips.results,
+    is_self: currentUser.user_id === userId,
+  });
+});
+
+// ========== 用户操作记录（分页） ==========
+users.get('/:id/logs', async (c) => {
+  const userId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(userId)) return jsonResponse({ error: '无效的用户 ID' }, 400);
+  const currentUser = c.get('user');
+
+  if (!(await canViewUser(c.env.DB, currentUser, userId))) {
+    return jsonResponse({ error: '权限不足' }, 403);
+  }
+
+  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const action = (c.req.query('action') || '').trim();
+  const offset = (page - 1) * pageSize;
+
+  const conditions = ['user_id = ?'];
+  const params: (string | number)[] = [userId];
+  if (action) {
+    conditions.push('action = ?');
+    params.push(action);
+  }
+  const where = ` WHERE ${conditions.join(' AND ')}`;
+
+  const rows = await c.env.DB.prepare(
+    `SELECT id, action, target_type, target_id, detail, ip, timestamp FROM audit_logs
+     ${where} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
+  ).bind(...params, pageSize, offset).all();
+
+  const total = await c.env.DB.prepare(`SELECT COUNT(*) as total FROM audit_logs${where}`)
+    .bind(...params)
+    .first<{ total: number }>();
+
+  return jsonResponse({
+    logs: rows.results,
+    total: total?.total || 0,
+    page,
+    pageSize,
+  });
+});
+
+// ========== 用户创建的短链（分页） ==========
+users.get('/:id/links', async (c) => {
+  const userId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(userId)) return jsonResponse({ error: '无效的用户 ID' }, 400);
+  const currentUser = c.get('user');
+
+  if (!(await canViewUser(c.env.DB, currentUser, userId))) {
+    return jsonResponse({ error: '权限不足' }, 403);
+  }
+
+  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const offset = (page - 1) * pageSize;
+
+  const rows = await c.env.DB.prepare(
+    `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.click_count, sl.created_at,
+      sl.group_id, d.domain as domain_name, pg.name as group_name
+     FROM short_links sl
+     LEFT JOIN domains d ON sl.domain_id = d.id
+     LEFT JOIN project_groups pg ON sl.group_id = pg.id
+     WHERE sl.created_by = ?
+     ORDER BY sl.created_at DESC LIMIT ? OFFSET ?`
+  ).bind(userId, pageSize, offset).all();
+
+  const total = await c.env.DB.prepare('SELECT COUNT(*) as total FROM short_links WHERE created_by = ?')
+    .bind(userId)
+    .first<{ total: number }>();
+
+  return jsonResponse({
+    links: rows.results,
+    total: total?.total || 0,
+    page,
+    pageSize,
   });
 });
 

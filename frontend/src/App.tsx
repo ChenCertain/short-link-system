@@ -64,7 +64,7 @@ export default function App() {
                 <Route
                   path="review"
                   element={
-                    <ProtectedRoute groupAdmin>
+                    <ProtectedRoute groupPermission="link.review">
                       <Review />
                     </ProtectedRoute>
                   }
@@ -80,7 +80,7 @@ export default function App() {
                 <Route
                   path="users"
                   element={
-                    <ProtectedRoute roles={['super_admin']}>
+                    <ProtectedRoute globalPermission="user.manage">
                       <Users />
                     </ProtectedRoute>
                   }
@@ -88,7 +88,7 @@ export default function App() {
                 <Route
                   path="audit"
                   element={
-                    <ProtectedRoute roles={['super_admin']}>
+                    <ProtectedRoute globalPermission="audit.view">
                       <Audit />
                     </ProtectedRoute>
                   }

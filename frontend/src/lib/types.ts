@@ -3,6 +3,9 @@ export type UserStatus = 'active' | 'disabled'
 export type ReviewStatus = 'approved' | 'pending' | 'rejected'
 export type ReviewBy = 'auto' | 'super_admin'
 
+/** 权限键 → 是否开启 */
+export type PermissionMap = Record<string, boolean>
+
 export interface AuthUser {
   id: number
   email: string
@@ -16,6 +19,11 @@ export interface AuthUser {
   last_login_ip?: string | null
   /** 该用户作为管理员的项目组 id 列表（项目组管理员） */
   managed_group_ids?: number[]
+  /** 全局权限 + 各项目组内的有效权限 */
+  permissions?: {
+    global: PermissionMap
+    groups: Record<string, PermissionMap>
+  }
 }
 
 export interface ProjectGroup {
@@ -41,6 +49,15 @@ export interface GroupMember {
   status: UserStatus
   group_role: 'admin' | 'member'
   joined_at: number
+  last_login_ip?: string | null
+  last_login_at?: number | null
+  /** 组内短链数量 */
+  link_count?: number
+  /** 与默认值不同的权限覆盖项 */
+  permissions_override?: PermissionMap
+  /** 该成员在当前组的有效权限 */
+  permissions?: PermissionMap
+  permissions_updated_at?: number | null
 }
 
 export interface Domain {
@@ -101,6 +118,8 @@ export interface GroupDetail {
   subGroups: { id: number; name: string; description: string | null }[]
   can_manage: boolean
   is_super_admin: boolean
+  /** 当前用户在该组的有效权限 */
+  permissions?: PermissionMap
 }
 
 export interface AccessRecord {
@@ -160,6 +179,47 @@ export interface UserItem {
   created_at: number
   /** 1=已设置密码，0=尚未设置（首次登录时自行设置） */
   password_set?: number
+  /** 创建的短链数 / 加入的项目组数 */
+  link_count?: number
+  group_count?: number
+  /** 全局权限覆盖项 */
+  global_permissions?: PermissionMap
+}
+
+/** 用户所在项目组 */
+export interface UserGroupItem {
+  id: number
+  name: string
+  parent_id: number | null
+  path: string
+  group_role: 'admin' | 'member'
+  joined_at: number
+  group_permissions?: PermissionMap
+}
+
+/** 用户详情（超级管理员 / 本人） */
+export interface UserDetail {
+  user: UserItem & {
+    updated_at?: number
+    permissions?: string | null
+    global_permissions?: PermissionMap
+    managed_group_ids?: number[]
+  }
+  groups: UserGroupItem[]
+  link_summary: { total: number; active: number; clicks: number }
+  links: (ShortLink & { group_name?: string | null })[]
+  logs: AuditLog[]
+  ips: { ip: string; count: number; last_seen: number }[]
+  is_self: boolean
+}
+
+/** 组成员概览（项目组管理员视角） */
+export interface MemberOverview {
+  user: UserItem & { last_login_ip?: string | null; last_login_at?: number | null }
+  groups: UserGroupItem[]
+  link_summary: { total: number; active: number; clicks: number }
+  links: (ShortLink & { group_name?: string | null })[]
+  scope_group_ids: number[] | null
 }
 
 export interface InitStatus {

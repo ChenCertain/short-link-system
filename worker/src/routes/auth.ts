@@ -11,7 +11,7 @@ import {
   getRequestIP,
 } from '../utils';
 import { logAudit } from '../middleware';
-import { getManagedGroupIds } from '../permissions';
+import { getManagedGroupIds, getGlobalPermissions, getGroupPermissions } from '../permissions';
 
 const auth = new Hono<{ Bindings: Env }>();
 
@@ -444,9 +444,30 @@ auth.get('/me', async (c) => {
 
   // 管理中的项目组（含作为组管理员的组），供前端决定可见菜单
   const managedGroupIds = await getManagedGroupIds(c.env.DB, user.id);
+  // 全局权限（用户管理 / 操作审计等由超级管理员逐人配置）
+  const globalPermissions = await getGlobalPermissions(c.env.DB, user.id);
+
+  // 各项目组内的有效权限（用于前端按钮级门控）
+  const relations = await c.env.DB.prepare(
+    'SELECT group_id FROM user_group_relations WHERE user_id = ?'
+  ).bind(user.id).all<{ group_id: number }>();
+  const groupPermissions: Record<string, Record<string, boolean>> = {};
+  for (const relation of relations.results) {
+    groupPermissions[String(relation.group_id)] = await getGroupPermissions(c.env.DB, user.id, relation.group_id);
+  }
+  for (const managedId of managedGroupIds) {
+    if (!groupPermissions[String(managedId)]) {
+      groupPermissions[String(managedId)] = await getGroupPermissions(c.env.DB, user.id, managedId);
+    }
+  }
 
   return jsonResponse({
-    user: { ...user, role: user.role === 'super_admin' ? 'super_admin' : 'user', managed_group_ids: managedGroupIds },
+    user: {
+      ...user,
+      role: user.role === 'super_admin' ? 'super_admin' : 'user',
+      managed_group_ids: managedGroupIds,
+      permissions: { global: globalPermissions, groups: groupPermissions },
+    },
   });
 });
 

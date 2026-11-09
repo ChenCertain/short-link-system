@@ -3,17 +3,27 @@ import { Link } from 'react-router-dom'
 import {
   ChevronDown,
   ChevronRight,
+  Eye,
   FolderPlus,
   Globe,
   Pencil,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   UserPlus,
   X,
 } from 'lucide-react'
 import { groupsApi, usersApi } from '@/lib/api'
-import type { GroupDetail, ProjectGroup, ShortLink, UserItem } from '@/lib/types'
+import type {
+  GroupDetail,
+  GroupMember,
+  MemberOverview,
+  PermissionMap,
+  ProjectGroup,
+  ShortLink,
+  UserItem,
+} from '@/lib/types'
 import {
   Badge,
   Button,
@@ -31,9 +41,11 @@ import {
 } from '@/components/ui'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { EditLinkModal } from '@/components/EditLinkModal'
+import { PermissionEditor } from '@/components/PermissionEditor'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { ROLE_LABELS } from '@/lib/utils'
+import { can, defaultPermissionMap, diffFromDefaults, GROUP_PERMISSION_DEFS } from '@/lib/permissions'
+import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -140,6 +152,16 @@ export default function Groups() {
   const [editingMember, setEditingMember] = useState<{ id: number; name: string; role: 'admin' | 'member' } | null>(null)
   const [savingRole, setSavingRole] = useState(false)
 
+  // 成员资料概览（IP / 所在组 / 创建的短链）
+  const [overviewMember, setOverviewMember] = useState<{ id: number; name: string } | null>(null)
+  const [memberOverview, setMemberOverview] = useState<MemberOverview | null>(null)
+  const [overviewLoading, setOverviewLoading] = useState(false)
+
+  // 成员权限配置
+  const [permMember, setPermMember] = useState<GroupMember | null>(null)
+  const [permValue, setPermValue] = useState<PermissionMap>({})
+  const [permSaving, setPermSaving] = useState(false)
+
   const [domainOpen, setDomainOpen] = useState(false)
   const [domainId, setDomainId] = useState('')
   const [bindingDomain, setBindingDomain] = useState(false)
@@ -241,7 +263,9 @@ export default function Groups() {
   // 搜索到成员后一键直接添加（弹窗保持打开，方便连续添加）
   const handleQuickAddMember = async (target: { id: number; name: string; email: string }) => {
     if (!selectedId) return
-    const role: 'admin' | 'member' = isSuperAdmin ? memberRole : 'member'
+    // 具备「设置成员身份」权限时可直接添加为组管理员
+    const canGrant = isSuperAdmin || canSetMemberRole
+    const role: 'admin' | 'member' = canGrant ? memberRole : 'member'
     setAddingUserId(target.id)
     try {
       await groupsApi.addMember(selectedId, { user_id: target.id, role })
@@ -293,6 +317,45 @@ export default function Groups() {
     }
   }
 
+  // 查看成员资料（IP / 所在组 / 创建的短链）
+  const openMemberOverview = async (member: GroupMember) => {
+    if (!selectedId) return
+    setOverviewMember({ id: member.id, name: member.name })
+    setMemberOverview(null)
+    setOverviewLoading(true)
+    try {
+      const data = await groupsApi.memberOverview(selectedId, member.id)
+      setMemberOverview(data)
+    } catch (err) {
+      show((err as Error).message, 'error')
+      setOverviewMember(null)
+    } finally {
+      setOverviewLoading(false)
+    }
+  }
+
+  // 配置单个成员在本组的权限
+  const openMemberPermissions = (member: GroupMember) => {
+    setPermMember(member)
+    setPermValue(member.permissions || defaultPermissionMap(member.group_role))
+  }
+
+  const handleSaveMemberPermissions = async () => {
+    if (!selectedId || !permMember) return
+    setPermSaving(true)
+    try {
+      const overrides = diffFromDefaults(permValue, permMember.group_role)
+      await groupsApi.updateMemberPermissions(selectedId, permMember.id, overrides)
+      show(`已更新 ${permMember.name} 的权限`, 'success')
+      setPermMember(null)
+      await loadDetail(selectedId)
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setPermSaving(false)
+    }
+  }
+
   const handleBindDomain = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedId || !domainId) {
@@ -326,7 +389,12 @@ export default function Groups() {
 
   // 是否有管理该组的权限（超管或该项目组管理员，含父组管理员）
   const canManageSelected = !!detail?.can_manage
-  const canManageMembers = canManageSelected
+  const canManageMembers = isSuperAdmin || can(detail?.permissions, 'group.member.add')
+  const canRemoveMembers = isSuperAdmin || can(detail?.permissions, 'group.member.remove')
+  const canSetMemberRole = isSuperAdmin || can(detail?.permissions, 'group.member.role')
+  const canConfigMemberPerm = isSuperAdmin || can(detail?.permissions, 'group.member.permission')
+  const canCreateChild = isSuperAdmin || can(detail?.permissions, 'group.create_child')
+  const canManageDomain = isSuperAdmin || can(detail?.permissions, 'group.domain.manage')
 
   const openMemberModal = () => {
     setMemberRole('member')
@@ -454,14 +522,14 @@ export default function Groups() {
                         </Button>
                       )}
                       {/* 项目组管理员可在自己管理的组下创建子组 */}
-                      {(isSuperAdmin || canManageSelected) && (
+                      {canCreateChild && (
                         <Button variant="outline" size="sm" onClick={() => openCreateModal(detail.group.id)}>
                           <FolderPlus className="h-4 w-4" />
                           新建子组
                         </Button>
                       )}
                       {/* 超管可绑定任意域名；项目组管理员只能复用自己管理范围内已有的域名 */}
-                      {(isSuperAdmin || canManageSelected) && (
+                      {canManageDomain && (
                         <Button variant="outline" size="sm" onClick={() => void openDomainModal()}>
                           <Globe className="h-4 w-4" />
                           绑定域名
@@ -595,7 +663,11 @@ export default function Groups() {
                     {detail.members.map((m) => {
                       const isSelf = m.id === user?.id
                       // 组管理员不能移除其他管理员；超级管理员可以
-                      const canRemove = canManageMembers && !isSelf && (isSuperAdmin || m.group_role !== 'admin')
+                      const canRemove = canRemoveMembers && !isSelf && (isSuperAdmin || m.group_role !== 'admin')
+                      // 同级组管理员不能互相改身份，需由上级管理员或超管处理
+                      const canEditRole = !isSelf && canSetMemberRole && (isSuperAdmin || m.group_role !== 'admin')
+                      const canEditPerm = !isSelf && canConfigMemberPerm
+                      const enabledPerms = Object.keys(m.permissions || {}).filter((k) => m.permissions?.[k]).length
                       return (
                         <li key={m.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
                           <div className="min-w-0 flex-1">
@@ -604,32 +676,54 @@ export default function Groups() {
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400">
                               {ROLE_LABELS[m.role] || m.role}
+                              {typeof m.link_count === 'number' ? ` · ${m.link_count} 条短链` : ''}
+                              {` · 已开启 ${enabledPerms} 项权限`}
+                            </p>
+                            <p className="font-mono text-[11px] text-gray-400">
+                              IP：{m.last_login_ip || '-'}
+                              {m.last_login_at ? ` · ${formatDateTime(m.last_login_at)}` : ''}
                             </p>
                           </div>
                           <Badge tone={m.group_role === 'admin' ? 'purple' : 'gray'}>
                             {m.group_role === 'admin' ? '组管理员' : '成员'}
                           </Badge>
                           <StatusBadge status={m.status} />
-                          {isSuperAdmin && (
+                          <div className="flex items-center gap-1">
                             <button
-                              onClick={() =>
-                                setEditingMember({ id: m.id, name: m.name, role: m.group_role })
-                              }
+                              onClick={() => void openMemberOverview(m)}
                               className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
-                              title="编辑成员身份"
+                              title="查看成员资料（IP / 所在组 / 创建的短链）"
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Eye className="h-4 w-4" />
                             </button>
-                          )}
-                          {canRemove && (
-                            <button
-                              onClick={() => setRemovingMember({ id: m.id, name: m.name })}
-                              className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                              title="移除成员"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          )}
+                            {canEditPerm && (
+                              <button
+                                onClick={() => openMemberPermissions(m)}
+                                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                                title="配置成员权限"
+                              >
+                                <ShieldCheck className="h-4 w-4" />
+                              </button>
+                            )}
+                            {canEditRole && (
+                              <button
+                                onClick={() => setEditingMember({ id: m.id, name: m.name, role: m.group_role })}
+                                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                                title="编辑成员身份"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            )}
+                            {canRemove && (
+                              <button
+                                onClick={() => setRemovingMember({ id: m.id, name: m.name })}
+                                className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                                title="移除成员"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
                         </li>
                       )
                     })}
@@ -646,7 +740,7 @@ export default function Groups() {
                       : '项目组内创建短链时可使用的域名（组管理员可复用父组已有域名）'
                   }
                   action={
-                    isSuperAdmin || canManageSelected ? (
+                    canManageDomain ? (
                       <Button variant="outline" size="sm" onClick={() => void openDomainModal()}>
                         <Plus className="h-4 w-4" />
                         绑定
@@ -660,7 +754,7 @@ export default function Groups() {
                     description={
                       isSuperAdmin
                         ? '绑定域名后，组内成员即可使用该域名创建短链'
-                        : canManageSelected
+                        : canManageDomain
                           ? '可绑定自己管理范围内（含父组）已经绑定过的域名'
                           : '该项目组暂未绑定域名，请联系项目组管理员或超级管理员绑定'
                     }
@@ -672,7 +766,7 @@ export default function Groups() {
                         <Globe className="h-4 w-4 text-gray-400" />
                         <span className="flex-1 text-sm text-gray-900 dark:text-gray-100">{d.domain}</span>
                         <StatusBadge status={d.status} />
-                        {(isSuperAdmin || canManageSelected) && (
+                        {canManageDomain && (
                           <button
                             onClick={() => handleUnbindDomain(d.id)}
                             className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
@@ -819,15 +913,20 @@ export default function Groups() {
             <Select
               id="m-role"
               value={memberRole}
-              disabled={!isSuperAdmin}
+              disabled={!(isSuperAdmin || canSetMemberRole)}
               onChange={(e) => setMemberRole(e.target.value as 'member' | 'admin')}
             >
-              <option value="member">成员（可查看组内短链）</option>
-              <option value="admin">组管理员（可审核短链、管理组内成员）</option>
+              <option value="member">成员（可创建并查看组内短链）</option>
+              <option value="admin">组管理员（可管理组内成员、域名与短链）</option>
             </Select>
-            {!isSuperAdmin && (
+            {!(isSuperAdmin || canSetMemberRole) && (
               <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                项目组管理员只能添加普通成员，管理员身份需由超级管理员授予
+                你没有设置成员身份的权限，只能添加普通成员
+              </p>
+            )}
+            {!isSuperAdmin && canSetMemberRole && (
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                你可以为该组（含子组）设置组管理员，被设置的组管理员默认拥有全部组内权限，也可在成员列表中逐项调整
               </p>
             )}
           </div>
@@ -875,6 +974,179 @@ export default function Groups() {
             </p>
           </div>
         </div>
+      </Modal>
+
+      {/* 成员资料概览 */}
+      <Modal
+        open={!!overviewMember}
+        onClose={() => {
+          setOverviewMember(null)
+          setMemberOverview(null)
+        }}
+        title={overviewMember ? `成员资料 · ${overviewMember.name}` : '成员资料'}
+        wide
+        footer={
+          <Button
+            variant="outline"
+            onClick={() => {
+              setOverviewMember(null)
+              setMemberOverview(null)
+            }}
+          >
+            关闭
+          </Button>
+        }
+      >
+        {overviewLoading ? (
+          <LoadingBlock label="正在加载成员资料..." />
+        ) : memberOverview ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <p className="text-xs text-gray-500 dark:text-gray-400">账号</p>
+                <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {memberOverview.user.email}
+                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <Badge tone="gray">{ROLE_LABELS[memberOverview.user.role] || memberOverview.user.role}</Badge>
+                  <StatusBadge status={memberOverview.user.status} />
+                </div>
+                <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  注册于 {formatDateTime(memberOverview.user.created_at)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <p className="text-xs text-gray-500 dark:text-gray-400">最后登录</p>
+                <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {memberOverview.user.last_login_at
+                    ? formatDateTime(memberOverview.user.last_login_at)
+                    : '从未登录'}
+                </p>
+                <p className="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">
+                  IP：{memberOverview.user.last_login_ip || '-'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: '创建短链', value: memberOverview.link_summary.total },
+                { label: '活跃短链', value: memberOverview.link_summary.active },
+                { label: '累计点击', value: memberOverview.link_summary.clicks },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg bg-gray-50 p-3 text-center dark:bg-gray-800/60">
+                  <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{item.value || 0}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{item.label}</p>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                所在项目组（{memberOverview.groups.length}）
+              </p>
+              {memberOverview.groups.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-gray-200 px-3 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  该用户尚未加入任何项目组
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+                  {memberOverview.groups.map((g) => (
+                    <li key={g.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                      <span className="flex-1 text-sm text-gray-900 dark:text-gray-100">{g.path}</span>
+                      <Badge tone={g.group_role === 'admin' ? 'purple' : 'gray'}>
+                        {g.group_role === 'admin' ? '组管理员' : '成员'}
+                      </Badge>
+                      <span className="text-[11px] text-gray-400">加入于 {formatDateTime(g.joined_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                最近创建的短链
+              </p>
+              {memberOverview.links.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-gray-200 px-3 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  该用户在你的管理范围内还没有创建短链
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+                  {memberOverview.links.map((l) => (
+                    <li key={l.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                      <Link
+                        to={`/dashboard/links/${l.id}`}
+                        className="text-sm font-medium text-brand-600 hover:underline dark:text-brand-400"
+                      >
+                        {l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
+                      </Link>
+                      <span className="min-w-0 flex-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                        {l.target_url}
+                      </span>
+                      <span className="text-[11px] text-gray-400">{l.group_name || '个人'}</span>
+                      <StatusBadge status={l.status} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        ) : (
+          <ErrorText>加载失败，请重试</ErrorText>
+        )}
+      </Modal>
+
+      {/* 配置成员权限 */}
+      <Modal
+        open={!!permMember}
+        onClose={() => setPermMember(null)}
+        title={permMember ? `配置权限 · ${permMember.name}` : '配置权限'}
+        wide
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setPermMember(null)}>
+              取消
+            </Button>
+            <Button onClick={handleSaveMemberPermissions} loading={permSaving}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        {permMember && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
+              <Badge tone={permMember.group_role === 'admin' ? 'purple' : 'gray'}>
+                {permMember.group_role === 'admin' ? '组管理员' : '成员'}
+              </Badge>
+              <span>
+                默认权限：
+                {permMember.group_role === 'admin'
+                  ? '全部组内权限（含子组，可向下继承）'
+                  : '创建短链、查看组内短链、编辑 / 删除自己的短链'}
+              </span>
+            </div>
+            <PermissionEditor
+              defs={GROUP_PERMISSION_DEFS}
+              value={permValue}
+              onChange={setPermValue}
+              defaults={defaultPermissionMap(permMember.group_role)}
+              description={`按需为 ${permMember.name} 单独开关权限，保存后立即生效；标记「已单独配置」的项与默认值不同`}
+            />
+            <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+              <span>重置为该身份默认权限</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPermValue(defaultPermissionMap(permMember.group_role))}
+              >
+                恢复默认
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* 编辑成员身份（仅超管） */}

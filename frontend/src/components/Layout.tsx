@@ -27,8 +27,10 @@ interface NavItem {
   icon: typeof LayoutDashboard
   /** 仅超级管理员可见 */
   superOnly?: boolean
-  /** 超级管理员或项目组管理员可见 */
-  groupAdmin?: boolean
+  /** 需要某项组内权限（任一管理的组满足即可） */
+  groupPermission?: string
+  /** 需要某项全局权限（超级管理员默认拥有） */
+  globalPermission?: string
   end?: boolean
 }
 
@@ -36,10 +38,10 @@ const navItems: NavItem[] = [
   { to: '/dashboard', label: '概览', icon: LayoutDashboard, superOnly: true, end: true },
   { to: '/dashboard/links', label: '短链管理', icon: Link2 },
   { to: '/dashboard/groups', label: '项目组', icon: FolderTree },
-  { to: '/dashboard/review', label: '短链审核', icon: ShieldCheck, groupAdmin: true },
+  { to: '/dashboard/review', label: '短链审核', icon: ShieldCheck, groupPermission: 'link.review' },
   { to: '/dashboard/stats', label: '指标统计', icon: BarChart3, superOnly: true },
-  { to: '/dashboard/users', label: '用户管理', icon: Users, superOnly: true },
-  { to: '/dashboard/audit', label: '操作审计', icon: ScrollText, superOnly: true },
+  { to: '/dashboard/users', label: '用户管理', icon: Users, globalPermission: 'user.manage' },
+  { to: '/dashboard/audit', label: '操作审计', icon: ScrollText, globalPermission: 'audit.view' },
   { to: '/dashboard/domains', label: '域名管理', icon: Globe, superOnly: true },
   { to: '/dashboard/settings', label: '系统设置', icon: Settings, superOnly: true },
   { to: '/dashboard/profile', label: '个人设置', icon: UserRound },
@@ -68,11 +70,16 @@ export default function Layout() {
 
   const isSuperAdmin = user?.role === 'super_admin'
   const isGroupAdmin = !!user?.managed_group_ids?.length
+  const globalPerms = user?.permissions?.global || {}
+  const groupPermsMap = user?.permissions?.groups || {}
+  const hasAnyGroupPermission = (key: string) =>
+    Object.values(groupPermsMap).some((perms) => perms?.[key] === true)
 
   const visibleNav = navItems.filter((item) => {
     if (!user) return false
     if (item.superOnly) return isSuperAdmin
-    if (item.groupAdmin) return isSuperAdmin || isGroupAdmin
+    if (item.globalPermission) return isSuperAdmin || globalPerms[item.globalPermission] === true
+    if (item.groupPermission) return isSuperAdmin || hasAnyGroupPermission(item.groupPermission)
     return true
   })
 

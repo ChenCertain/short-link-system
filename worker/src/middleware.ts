@@ -3,7 +3,7 @@
 import { createMiddleware } from 'hono/factory';
 import type { Env, JWTPayload, UserRole } from './types';
 import { verifyJWT, getRequestIP, hashIP, jsonResponse } from './utils';
-import { getManagedGroupIds } from './permissions';
+import { getManagedGroupIds, hasGlobalPermission } from './permissions';
 
 // 从 Authorization header 提取并验证 JWT
 export const authMiddleware = createMiddleware<{
@@ -42,6 +42,22 @@ export function requireRole(...roles: UserRole[]) {
       return jsonResponse({ error: '权限不足' }, 403);
     }
     await next();
+  });
+}
+
+// 全局权限检查中间件（超级管理员默认拥有全部全局权限，其余用户按 users.permissions 配置）
+export function requireGlobalPermission(key: string) {
+  return createMiddleware<{
+    Bindings: Env;
+    Variables: { user: JWTPayload };
+  }>(async (c, next) => {
+    const user = c.get('user');
+    if (!user) return jsonResponse({ error: '未登录' }, 401);
+    if (user.role === 'super_admin') return next();
+    if (!(await hasGlobalPermission(c.env.DB, user.user_id, key))) {
+      return jsonResponse({ error: '权限不足' }, 403);
+    }
+    return next();
   });
 }
 

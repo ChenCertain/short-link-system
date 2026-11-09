@@ -197,3 +197,162 @@ export async function getSuperAdminEmails(db: D1Database): Promise<string[]> {
     .all<{ email: string }>();
   return rows.results.map((r) => r.email);
 }
+
+// ==========================================================
+// 细粒度权限
+// 组内权限（scope = group）：作用域为「某个项目组」，成员 / 组管理员有不同默认值
+// 全局权限（scope = global）：由超级管理员为单个用户在「用户管理」中配置
+// ==========================================================
+
+export type PermissionScope = 'group' | 'global';
+
+export interface PermissionDef {
+  key: string;
+  label: string;
+  description: string;
+  scope: PermissionScope;
+  category: string;
+}
+
+export const PERMISSION_DEFS: PermissionDef[] = [
+  // ---- 短链 ----
+  { key: 'link.create', label: '创建短链', description: '在组内创建短链', scope: 'group', category: '短链' },
+  { key: 'link.view.group', label: '查看组内短链', description: '查看项目组内全部短链与详情', scope: 'group', category: '短链' },
+  { key: 'link.update.own', label: '编辑自己的短链', description: '编辑自己创建的短链', scope: 'group', category: '短链' },
+  { key: 'link.delete.own', label: '删除自己的短链', description: '删除自己创建的短链', scope: 'group', category: '短链' },
+  { key: 'link.update.any', label: '编辑组内任意短链', description: '编辑组内他人创建的短链', scope: 'group', category: '短链' },
+  { key: 'link.delete.any', label: '删除组内任意短链', description: '删除组内他人创建的短链', scope: 'group', category: '短链' },
+  { key: 'link.review', label: '审核组内短链', description: '通过 / 驳回组内待审核短链', scope: 'group', category: '短链' },
+  // ---- 项目组管理 ----
+  { key: 'group.create_child', label: '创建子组', description: '在该组下创建子项目组', scope: 'group', category: '项目组管理' },
+  { key: 'group.domain.manage', label: '管理组域名', description: '为组绑定 / 解绑可用域名', scope: 'group', category: '项目组管理' },
+  { key: 'group.member.add', label: '添加成员', description: '向组内添加成员', scope: 'group', category: '成员管理' },
+  { key: 'group.member.remove', label: '移除成员', description: '将成员移出项目组', scope: 'group', category: '成员管理' },
+  { key: 'group.member.role', label: '设置成员身份', description: '设置成员为组管理员（含子组管理员）', scope: 'group', category: '成员管理' },
+  { key: 'group.member.permission', label: '配置成员权限', description: '为组内 / 子组成员单独开关权限', scope: 'group', category: '成员管理' },
+  // ---- 全局 ----
+  { key: 'user.manage', label: '用户管理', description: '查看用户列表、用户详情与操作记录，配置全局权限', scope: 'global', category: '全局管理' },
+  { key: 'audit.view', label: '操作审计', description: '查看全站操作审计日志', scope: 'global', category: '全局管理' },
+];
+
+export const GROUP_PERMISSION_KEYS: string[] = PERMISSION_DEFS.filter((p) => p.scope === 'group').map((p) => p.key);
+export const GLOBAL_PERMISSION_KEYS: string[] = PERMISSION_DEFS.filter((p) => p.scope === 'global').map((p) => p.key);
+
+/** 普通成员默认权限 */
+export const MEMBER_DEFAULT_PERMISSIONS: string[] = [
+  'link.create',
+  'link.view.group',
+  'link.update.own',
+  'link.delete.own',
+];
+/** 组管理员默认拥有全部组内权限 */
+export const ADMIN_DEFAULT_PERMISSIONS: string[] = GROUP_PERMISSION_KEYS;
+
+/** 解析 JSON 权限字段，非法内容按空对象处理 */
+export function parsePermissionJson(raw: string | null | undefined): Record<string, boolean> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const result: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'boolean') result[key] = value;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/** 默认值 + 覆盖项 → 完整权限表 */
+export function buildPermissionMap(
+  keys: string[],
+  defaults: string[],
+  overrides: Record<string, boolean>,
+): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
+  for (const key of keys) {
+    map[key] = overrides[key] !== undefined ? overrides[key] : defaults.includes(key);
+  }
+  return map;
+}
+
+/**
+ * 用户在指定项目组内的有效权限。
+ * 组管理员（含父组管理员）的权限沿祖链生效：子组内没有直接关系时，向上找最近的关联记录。
+ */
+export async function getGroupPermissions(
+  db: D1Database,
+  userId: number,
+  groupId: number | null,
+): Promise<Record<string, boolean>> {
+  if (!groupId) {
+    return buildPermissionMap(GROUP_PERMISSION_KEYS, [], {});
+  }
+
+  let current: number | null = groupId;
+  for (let i = 0; i < 20 && current; i++) {
+    let row: { role: 'admin' | 'member'; permissions: string | null } | null = null;
+    try {
+      row = await db
+        .prepare('SELECT role, permissions FROM user_group_relations WHERE user_id = ? AND group_id = ?')
+        .bind(userId, current)
+        .first<{ role: 'admin' | 'member'; permissions: string | null }>();
+    } catch {
+      // 迁移未执行（缺少 permissions 列）时降级为仅按身份使用默认权限
+      const basic = await db
+        .prepare('SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?')
+        .bind(userId, current)
+        .first<{ role: 'admin' | 'member' }>();
+      row = basic ? { role: basic.role, permissions: null } : null;
+    }
+    if (row) {
+      const overrides = parsePermissionJson(row.permissions);
+      const defaults = row.role === 'admin' ? ADMIN_DEFAULT_PERMISSIONS : MEMBER_DEFAULT_PERMISSIONS;
+      return buildPermissionMap(GROUP_PERMISSION_KEYS, defaults, overrides);
+    }
+    current = await getParentId(db, current);
+  }
+
+  return buildPermissionMap(GROUP_PERMISSION_KEYS, [], {});
+}
+
+/** 判断用户在组内是否具备某项权限（超管由调用方先行短路） */
+export async function hasGroupPermission(
+  db: D1Database,
+  userId: number,
+  groupId: number | null,
+  key: string,
+): Promise<boolean> {
+  const perms = await getGroupPermissions(db, userId, groupId);
+  return perms[key] === true;
+}
+
+/** 用户全局权限（超级管理员全开） */
+export async function getGlobalPermissions(db: D1Database, userId: number): Promise<Record<string, boolean>> {
+  let user: { role: string; permissions: string | null } | null = null;
+  try {
+    user = await db
+      .prepare('SELECT role, permissions FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ role: string; permissions: string | null }>();
+  } catch {
+    // 迁移未执行（缺少 permissions 列）时降级为无全局权限
+    const basic = await db
+      .prepare('SELECT role FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ role: string }>();
+    user = basic ? { role: basic.role, permissions: null } : null;
+  }
+  if (!user) return buildPermissionMap(GLOBAL_PERMISSION_KEYS, [], {});
+  if (user.role === 'super_admin') {
+    return buildPermissionMap(GLOBAL_PERMISSION_KEYS, GLOBAL_PERMISSION_KEYS, {});
+  }
+  return buildPermissionMap(GLOBAL_PERMISSION_KEYS, [], parsePermissionJson(user.permissions));
+}
+
+/** 判断用户是否具备某项全局权限 */
+export async function hasGlobalPermission(db: D1Database, userId: number, key: string): Promise<boolean> {
+  const perms = await getGlobalPermissions(db, userId);
+  return perms[key] === true;
+}

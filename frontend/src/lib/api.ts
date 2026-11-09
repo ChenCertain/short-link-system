@@ -5,10 +5,13 @@ import type {
   GroupDetail,
   InitStatus,
   LinkStats,
+  MemberOverview,
   OverviewStats,
+  PermissionMap,
   ProjectGroup,
   ReviewLink,
   ShortLink,
+  UserDetail,
   UserItem,
 } from './types'
 
@@ -136,8 +139,25 @@ export const usersApi = {
     if (params.search) q.set('search', params.search)
     return get<{ users: UserItem[]; total: number; page: number; pageSize: number }>(`/api/users?${q}`)
   },
-  detail: (id: number) =>
-    get<{ user: AuthUser; groups: { id: number; name: string; parent_id: number | null; group_role: string }[] }>(`/api/users/${id}`),
+  detail: (id: number) => get<UserDetail>(`/api/users/${id}`),
+  logs: (id: number, params: { page?: number; pageSize?: number; action?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (params.page) q.set('page', String(params.page))
+    if (params.pageSize) q.set('pageSize', String(params.pageSize))
+    if (params.action) q.set('action', params.action)
+    return get<{ logs: AuditLog[]; total: number; page: number; pageSize: number }>(`/api/users/${id}/logs?${q}`)
+  },
+  links: (id: number, params: { page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.page) q.set('page', String(params.page))
+    if (params.pageSize) q.set('pageSize', String(params.pageSize))
+    return get<{ links: ShortLink[]; total: number; page: number; pageSize: number }>(`/api/users/${id}/links?${q}`)
+  },
+  updatePermissions: (id: number, permissions: PermissionMap) =>
+    put<{ success: boolean; permissions: PermissionMap; effective: PermissionMap }>(
+      `/api/users/${id}/permissions`,
+      { permissions },
+    ),
   create: (payload: {
     email: string
     password?: string
@@ -185,6 +205,25 @@ export const groupsApi = {
     put<{ success: boolean }>(`/api/groups/${id}/members/${userId}`, { role }),
   removeMember: (id: number, userId: number) =>
     del<{ success: boolean }>(`/api/groups/${id}/members/${userId}`),
+  memberOverview: (id: number, userId: number) =>
+    get<MemberOverview>(`/api/groups/${id}/members/${userId}/overview`),
+  memberLinks: (
+    id: number,
+    userId: number,
+    params: { page?: number; pageSize?: number } = {},
+  ) => {
+    const q = new URLSearchParams()
+    if (params.page) q.set('page', String(params.page))
+    if (params.pageSize) q.set('pageSize', String(params.pageSize))
+    return get<{ links: ShortLink[]; total: number; page: number; pageSize: number }>(
+      `/api/groups/${id}/members/${userId}/links?${q}`,
+    )
+  },
+  updateMemberPermissions: (id: number, userId: number, permissions: PermissionMap) =>
+    put<{ success: boolean; permissions: PermissionMap; effective: PermissionMap }>(
+      `/api/groups/${id}/members/${userId}/permissions`,
+      { permissions },
+    ),
   bindDomain: (id: number, domainId: number) =>
     post<{ success: boolean }>(`/api/groups/${id}/domains`, { domain_id: domainId }),
   unbindDomain: (id: number, domainId: number) =>
@@ -302,11 +341,13 @@ export const configApi = {
 
 // ============ 操作审计 ============
 export const auditApi = {
-  list: (params: { page?: number; pageSize?: number; action?: string } = {}) => {
+  list: (params: { page?: number; pageSize?: number; action?: string; userId?: number; keyword?: string } = {}) => {
     const q = new URLSearchParams()
     if (params.page) q.set('page', String(params.page))
     if (params.pageSize) q.set('pageSize', String(params.pageSize))
     if (params.action) q.set('action', params.action)
+    if (params.userId) q.set('userId', String(params.userId))
+    if (params.keyword) q.set('keyword', params.keyword)
     return get<{ logs: AuditLog[]; total: number; page: number; pageSize: number }>(`/api/audit?${q}`)
   },
 }
