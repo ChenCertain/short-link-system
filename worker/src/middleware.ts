@@ -2,7 +2,7 @@
 
 import { createMiddleware } from 'hono/factory';
 import type { Env, JWTPayload, UserRole } from './types';
-import { verifyJWT, getRequestIP, hashIP, jsonResponse } from './utils';
+import { verifyJWT, getRequestIP, getRequestLocation, hashIP, jsonResponse } from './utils';
 import { getManagedGroupIds, hasGlobalPermission } from './permissions';
 
 // 从 Authorization header 提取并验证 JWT
@@ -73,7 +73,15 @@ export async function logAudit(
 ): Promise<void> {
   const ip = getRequestIP(request);
   const ip_hash = await hashIP(ip, 'audit-salt');
-  await db.prepare(
-    'INSERT INTO audit_logs (user_id, action, target_type, target_id, detail, ip, ip_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(user_id, action, target_type || null, target_id || null, detail || null, ip, ip_hash).run();
+  const location = getRequestLocation(request);
+  try {
+    await db.prepare(
+      'INSERT INTO audit_logs (user_id, action, target_type, target_id, detail, ip, ip_hash, location) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(user_id, action, target_type || null, target_id || null, detail || null, ip, ip_hash, location).run();
+  } catch {
+    // 迁移 0008 未执行时降级为不含地理位置的写入
+    await db.prepare(
+      'INSERT INTO audit_logs (user_id, action, target_type, target_id, detail, ip, ip_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(user_id, action, target_type || null, target_id || null, detail || null, ip, ip_hash).run();
+  }
 }

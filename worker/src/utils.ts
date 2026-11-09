@@ -209,6 +209,33 @@ export function getRequestIP(request: Request): string {
   return cf?.ip || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Real-IP') || '0.0.0.0';
 }
 
+// 常用国家 / 地区中文名（未收录的国家直接显示两位代码）
+const COUNTRY_NAMES: Record<string, string> = {
+  CN: '中国', HK: '中国香港', TW: '中国台湾', MO: '中国澳门',
+  JP: '日本', KR: '韩国', SG: '新加坡', MY: '马来西亚', TH: '泰国',
+  VN: '越南', PH: '菲律宾', ID: '印度尼西亚', IN: '印度', PK: '巴基斯坦',
+  US: '美国', CA: '加拿大', BR: '巴西', MX: '墨西哥', AR: '阿根廷',
+  GB: '英国', DE: '德国', FR: '法国', NL: '荷兰', BE: '比利时',
+  CH: '瑞士', SE: '瑞典', NO: '挪威', DK: '丹麦', FI: '芬兰',
+  PL: '波兰', ES: '西班牙', IT: '意大利', PT: '葡萄牙', IE: '爱尔兰',
+  AT: '奥地利', CZ: '捷克', GR: '希腊', RU: '俄罗斯', UA: '乌克兰',
+  TR: '土耳其', IL: '以色列', AE: '阿联酋', SA: '沙特阿拉伯', EG: '埃及',
+  ZA: '南非', NG: '尼日利亚', KE: '肯尼亚', AU: '澳大利亚', NZ: '新西兰',
+};
+
+// 解析请求来源地理位置（依赖 Cloudflare 边缘节点提供的 cf 对象，本地 / 非 CF 环境返回 null）
+export function getRequestLocation(request: Request): string | null {
+  const cf = (request as Request & {
+    cf?: { country?: string; region?: string; city?: string };
+  }).cf;
+  if (!cf) return null;
+  const parts: string[] = [];
+  if (cf.country) parts.push(COUNTRY_NAMES[cf.country] || cf.country);
+  if (cf.region && cf.region !== cf.country) parts.push(cf.region);
+  if (cf.city) parts.push(cf.city);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // 解析 User-Agent 简化信息
 export function parseUserAgent(ua: string | null): { browser: string; os: string; device: string } {
   if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Unknown' };

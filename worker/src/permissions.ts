@@ -40,6 +40,19 @@ export async function isGroupAdminOf(db: D1Database, userId: number, groupId: nu
   return false;
 }
 
+/**
+ * 用户是否是该组的「直接」管理员（关系记录直接挂在当前组上）。
+ * 用于区分「同级管理员」与「上级（父组）管理员」：
+ * 同级管理员之间不能互相修改身份 / 权限 / 移出，必须由上级管理员或超级管理员处理。
+ */
+export async function isDirectGroupAdminOf(db: D1Database, userId: number, groupId: number): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT id FROM user_group_relations WHERE user_id = ? AND group_id = ? AND role = 'admin'")
+    .bind(userId, groupId)
+    .first();
+  return !!row;
+}
+
 /** 把一组项目组 id 展开为「自身 + 所有后代组」 */
 export async function expandGroupIdsWithDescendants(db: D1Database, rootIds: number[]): Promise<number[]> {
   if (rootIds.length === 0) return [];

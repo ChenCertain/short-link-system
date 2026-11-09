@@ -15,6 +15,7 @@ import { jsonResponse } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
 import {
   isGroupAdminOf,
+  isDirectGroupAdminOf,
   isGroupVisibleToUser,
   getManageableDomainIds,
   isDomainBoundToAncestor,
@@ -242,6 +243,8 @@ groups.get('/:id', async (c) => {
     }),
     subGroups: subGroups.results,
     can_manage: canManage,
+    // 是否该组的「直接」管理员（用于前端区分同级管理员：同级之间不能互相改身份/权限/移除）
+    is_direct_admin: !isSuperAdmin && (await isDirectGroupAdminOf(c.env.DB, currentUser.user_id, groupId)),
     permissions,
     is_super_admin: isSuperAdmin,
   });
@@ -584,13 +587,10 @@ groups.put('/:id/members/:userId', async (c) => {
     return jsonResponse({ error: '该用户不在项目组中' }, 404);
   }
 
-  // 同级组管理员不能互相降权，需由上级管理员或超级管理员处理
-  if (!isSuperAdmin && target.role === 'admin' && body.role === 'member') {
-    const direct = await c.env.DB.prepare(
-      'SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?'
-    ).bind(currentUser.user_id, groupId).first<{ role: string }>();
-    if (direct?.role === 'admin') {
-      return jsonResponse({ error: '同级组管理员身份需要由上级管理员或超级管理员调整' }, 403);
+  // 同级组管理员之间不能互相调整身份（升/降都不行），需由上级管理员或超级管理员处理
+  if (!isSuperAdmin && target.role === 'admin') {
+    if (await isDirectGroupAdminOf(c.env.DB, currentUser.user_id, groupId)) {
+      return jsonResponse({ error: '同级组管理员的身份需要由上级管理员或超级管理员调整' }, 403);
     }
   }
 
@@ -633,9 +633,9 @@ groups.delete('/:id/members/:userId', async (c) => {
     return jsonResponse({ error: '你没有移除成员的权限' }, 403);
   }
 
-  // 不能移除自己
-  if (userId === currentUser.user_id) {
-    return jsonResponse({ error: '不能移除自己' }, 400);
+  // 组管理员不能移除自己（避免误操作丢管理权）；超级管理员可以把自己移出组
+  if (userId === currentUser.user_id && !isSuperAdmin) {
+    return jsonResponse({ error: '不能移除自己，请联系上级管理员或超级管理员' }, 400);
   }
 
   const target = await c.env.DB.prepare(
@@ -862,6 +862,13 @@ groups.put('/:id/members/:userId/permissions', async (c) => {
   ).bind(userId, groupId).first<{ role: string }>();
   if (!target) {
     return jsonResponse({ error: '该用户不在项目组中' }, 404);
+  }
+
+  // 同级组管理员之间不能互相修改权限（上级管理员与超管可以）
+  if (!isSuperAdmin && target.role === 'admin') {
+    if (await isDirectGroupAdminOf(c.env.DB, currentUser.user_id, groupId)) {
+      return jsonResponse({ error: '同级组管理员的权限需要由上级管理员或超级管理员调整' }, 403);
+    }
   }
 
   const overrides: Record<string, boolean> = {};

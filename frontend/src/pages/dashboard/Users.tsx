@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Eye, Pencil, Plus, Search, ShieldCheck, Trash2 } from 'lucide-react'
-import { usersApi } from '@/lib/api'
-import type { AuditLog, PermissionMap, ReviewBy, ShortLink, UserDetail, UserItem, UserRole, UserStatus } from '@/lib/types'
+import { ExternalLink, Eye, Pencil, Plus, Search, ShieldCheck, Trash2 } from 'lucide-react'
+import { groupsApi, linksApi, usersApi } from '@/lib/api'
+import type {
+  AuditLog,
+  PermissionMap,
+  ProjectGroup,
+  ReviewBy,
+  ShortLink,
+  UserDetail,
+  UserItem,
+  UserRole,
+  UserStatus,
+} from '@/lib/types'
 import {
   Badge,
   Button,
@@ -16,13 +26,25 @@ import {
   Spinner,
   StatusBadge,
 } from '@/components/ui'
+import { EditLinkModal } from '@/components/EditLinkModal'
 import { PermissionEditor } from '@/components/PermissionEditor'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
+import { actionLabel, describeDetail, targetTypeLabel } from '@/lib/audit'
 import { GLOBAL_PERMISSION_DEFS } from '@/lib/permissions'
 import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
 
 type DetailTab = 'overview' | 'links' | 'logs' | 'permissions'
+
+/** 把组树拍平为「带缩进的下拉选项」 */
+function flattenGroupOptions(groups: ProjectGroup[], depth = 0): { id: number; label: string }[] {
+  const result: { id: number; label: string }[] = []
+  for (const group of groups) {
+    result.push({ id: group.id, label: `${'　'.repeat(depth)}${depth > 0 ? '└ ' : ''}${group.name}` })
+    if (group.children?.length) result.push(...flattenGroupOptions(group.children, depth + 1))
+  }
+  return result
+}
 
 const roleTone = (role: string) => (role === 'super_admin' ? 'purple' : 'gray') as 'purple' | 'gray'
 
@@ -36,6 +58,19 @@ export default function Users() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // 筛选：项目组 / 组内身份 / 角色 / 状态
+  const [filterGroupId, setFilterGroupId] = useState(0)
+  const [filterGroupRole, setFilterGroupRole] = useState<'admin' | 'member' | 'none' | ''>('')
+  const [filterRole, setFilterRole] = useState<'super_admin' | 'user' | ''>('')
+  const [filterStatus, setFilterStatus] = useState<'active' | 'disabled' | ''>('')
+  const [groupOptions, setGroupOptions] = useState<{ id: number; label: string }[]>([])
+  const [groups, setGroups] = useState<ProjectGroup[]>([])
+
+  // 详情内短链的编辑 / 删除
+  const [editingLink, setEditingLink] = useState<ShortLink | null>(null)
+  const [deletingLink, setDeletingLink] = useState<ShortLink | null>(null)
+  const [linkDeleteLoading, setLinkDeleteLoading] = useState(false)
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState<{
@@ -104,6 +139,8 @@ export default function Users() {
   const [permSaving, setPermSaving] = useState(false)
 
   const isSuperAdmin = user?.role === 'super_admin'
+  // 最高权限账户（站点初始化时创建的超级管理员）：只有它本身能管理其他超级管理员
+  const isRoot = user?.is_root === true
   const detailPageSize = 10
 
   const pageSize = 20
@@ -113,7 +150,15 @@ export default function Users() {
     setLoading(true)
     setError('')
     try {
-      const data = await usersApi.list({ page, pageSize, search })
+      const data = await usersApi.list({
+        page,
+        pageSize,
+        search,
+        groupId: filterGroupId || undefined,
+        groupRole: filterGroupRole || undefined,
+        role: filterRole || undefined,
+        status: filterStatus || undefined,
+      })
       setUsers(data.users)
       setTotal(data.total)
     } catch (err) {
@@ -121,11 +166,23 @@ export default function Users() {
     } finally {
       setLoading(false)
     }
-  }, [page, search])
+  }, [page, search, filterGroupId, filterGroupRole, filterRole, filterStatus])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  // 项目组下拉（用于筛选）
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    groupsApi
+      .list()
+      .then((data) => {
+        setGroups(data.groups)
+        setGroupOptions(flattenGroupOptions(data.groups))
+      })
+      .catch(() => undefined)
+  }, [isSuperAdmin])
 
   const resetCreateForm = () =>
     setCreateForm({
@@ -292,6 +349,33 @@ export default function Users() {
     }
   }
 
+  const handleDeleteLink = async () => {
+    if (!deletingLink || !detail) return
+    setLinkDeleteLoading(true)
+    try {
+      await linksApi.remove(deletingLink.id)
+      show('短链已删除', 'success')
+      setDeletingLink(null)
+      void loadDetailLinks(detail.user.id, linksPage)
+      void load()
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setLinkDeleteLoading(false)
+    }
+  }
+
+  const resetFilters = () => {
+    setSearch('')
+    setFilterGroupId(0)
+    setFilterGroupRole('')
+    setFilterRole('')
+    setFilterStatus('')
+    setPage(1)
+  }
+
+  const hasFilter = !!(search || filterGroupId || filterGroupRole || filterRole || filterStatus)
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -299,6 +383,9 @@ export default function Users() {
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">用户管理</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             共 {total} 位用户 · 账户只能由超级管理员创建，项目组管理员在项目组内设置
+          </p>
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            最高权限账户（站点初始化时创建的超级管理员）可以管理其他超级管理员，其他超级管理员不能修改或移除它
           </p>
         </div>
         <Button
@@ -315,17 +402,84 @@ export default function Users() {
 
       <Card>
         <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
-          <div className="relative max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <Input
-              className="pl-9"
-              placeholder="搜索邮箱或姓名"
-              value={search}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input
+                className="pl-9"
+                placeholder="搜索邮箱或姓名"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setPage(1)
+                }}
+              />
+            </div>
+            <Select
+              className="h-10 w-44"
+              value={filterGroupId}
               onChange={(e) => {
-                setSearch(e.target.value)
+                const next = Number(e.target.value)
+                setFilterGroupId(next)
+                if (next > 0) setFilterGroupRole('')
                 setPage(1)
               }}
-            />
+              title="按项目组筛选（含其子组）"
+            >
+              <option value={0}>全部项目组</option>
+              {groupOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+            <Select
+              className="h-10 w-36"
+              value={filterGroupRole}
+              onChange={(e) => {
+                setFilterGroupRole(e.target.value as typeof filterGroupRole)
+                setPage(1)
+              }}
+            >
+              <option value="">组内身份不限</option>
+              {filterGroupId > 0 ? (
+                <>
+                  <option value="admin">组管理员</option>
+                  <option value="member">组内成员</option>
+                </>
+              ) : (
+                <option value="none">未加入任何组</option>
+              )}
+            </Select>
+            <Select
+              className="h-10 w-32"
+              value={filterRole}
+              onChange={(e) => {
+                setFilterRole(e.target.value as typeof filterRole)
+                setPage(1)
+              }}
+            >
+              <option value="">全部角色</option>
+              <option value="super_admin">超级管理员</option>
+              <option value="user">普通用户</option>
+            </Select>
+            <Select
+              className="h-10 w-32"
+              value={filterStatus}
+              onChange={(e) => {
+                setFilterStatus(e.target.value as typeof filterStatus)
+                setPage(1)
+              }}
+            >
+              <option value="">全部状态</option>
+              <option value="active">正常</option>
+              <option value="disabled">已停用</option>
+            </Select>
+            {hasFilter && (
+              <Button variant="ghost" size="sm" onClick={resetFilters}>
+                清除筛选
+              </Button>
+            )}
           </div>
         </div>
 
@@ -350,7 +504,10 @@ export default function Users() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {users.map((u) => (
+                  {users.map((u) => {
+                    const isRootUser = u.is_root === 1 || u.is_root === true
+                    const rootLocked = isRootUser && !isRoot
+                    return (
                     <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                       <td className="px-4 py-3">
                         <button
@@ -364,9 +521,29 @@ export default function Users() {
                         <p className="mt-0.5 text-[11px] text-gray-400">
                           {u.link_count ?? 0} 条短链 · {u.group_count ?? 0} 个项目组
                         </p>
+                        {u.groups && u.groups.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {u.groups.slice(0, 3).map((g) => (
+                              <span
+                                key={g.id}
+                                className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                                title={g.role === 'admin' ? '该组的组管理员' : '该组成员'}
+                              >
+                                {g.path}
+                                {g.role === 'admin' ? ' · 管理员' : ''}
+                              </span>
+                            ))}
+                            {u.groups.length > 3 && (
+                              <span className="text-[10px] text-gray-400">+{u.groups.length - 3}</span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge tone={roleTone(u.role)}>{ROLE_LABELS[u.role] || u.role}</Badge>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge tone={roleTone(u.role)}>{ROLE_LABELS[u.role] || u.role}</Badge>
+                          {isRootUser && <Badge tone="red">最高权限</Badge>}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -404,31 +581,40 @@ export default function Users() {
                           {isSuperAdmin && (
                             <button
                               onClick={() => void openDetail(u, 'permissions')}
-                              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
-                              title="配置权限"
+                              disabled={rootLocked}
+                              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 disabled:opacity-30 dark:hover:bg-gray-800"
+                              title={rootLocked ? '最高权限账户的权限只能由本人调整' : '配置权限'}
                             >
                               <ShieldCheck className="h-4 w-4" />
                             </button>
                           )}
                           <button
                             onClick={() => openEdit(u)}
-                            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
-                            title="编辑"
+                            disabled={rootLocked}
+                            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 dark:hover:bg-gray-800"
+                            title={rootLocked ? '最高权限账户只能由本人修改' : '编辑'}
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => setDeleting(u)}
-                            disabled={u.id === user?.id}
+                            disabled={u.id === user?.id || rootLocked || (u.role === 'super_admin' && !isRoot)}
                             className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 dark:hover:bg-red-900/20"
-                            title="删除"
+                            title={
+                              rootLocked
+                                ? '最高权限账户不能被删除'
+                                : u.role === 'super_admin' && !isRoot
+                                  ? '只有最高权限账户可以删除超级管理员'
+                                  : '删除'
+                            }
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -589,7 +775,9 @@ export default function Users() {
                 value={editForm.role}
                 onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
               >
-                <option value="user">普通用户</option>
+                <option value="user" disabled={editing?.is_root === 1 || editing?.is_root === true}>
+                  普通用户
+                </option>
                 <option value="super_admin">超级管理员</option>
               </Select>
             </div>
@@ -601,7 +789,10 @@ export default function Users() {
                 onChange={(e) => setEditForm({ ...editForm, status: e.target.value as UserStatus })}
               >
                 <option value="active">正常</option>
-                <option value="disabled" disabled={editing?.id === user?.id}>
+                <option
+                  value="disabled"
+                  disabled={editing?.id === user?.id || editing?.is_root === 1 || editing?.is_root === true}
+                >
                   禁用
                 </option>
               </Select>
@@ -721,6 +912,9 @@ export default function Users() {
                       <Badge tone={roleTone(detail.user.role)}>
                         {ROLE_LABELS[detail.user.role] || detail.user.role}
                       </Badge>
+                      {(detail.user.is_root === 1 || detail.user.is_root === true) && (
+                        <Badge tone="red">最高权限</Badge>
+                      )}
                       <StatusBadge status={detail.user.status === 'active' ? 'active' : 'disabled'} />
                       {detail.user.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
                       {!!detail.user.require_review && (
@@ -788,8 +982,9 @@ export default function Users() {
                     <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
                       {detail.ips.map((item) => (
                         <li key={item.ip} className="flex items-center gap-2 px-3 py-2 text-xs">
-                          <span className="flex-1 font-mono text-gray-700 dark:text-gray-300">{item.ip}</span>
-                          <span className="text-gray-400">{item.count} 次</span>
+                          <span className="font-mono text-gray-700 dark:text-gray-300">{item.ip}</span>
+                          {item.location && <span className="text-gray-400">{item.location}</span>}
+                          <span className="ml-auto text-gray-400">{item.count} 次</span>
                           <span className="text-gray-400">{formatDateTime(item.last_seen)}</span>
                         </li>
                       ))}
@@ -814,12 +1009,14 @@ export default function Users() {
                             <th className="px-3 py-2 font-medium">短链</th>
                             <th className="px-3 py-2 font-medium">目标链接</th>
                             <th className="px-3 py-2 font-medium">项目组</th>
+                            <th className="px-3 py-2 font-medium">状态</th>
                             <th className="px-3 py-2 font-medium">点击</th>
+                            <th className="px-3 py-2 text-right font-medium">操作</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                           {detailLinks.map((l) => (
-                            <tr key={l.id}>
+                            <tr key={l.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                               <td className="px-3 py-2">
                                 <p className="font-medium text-brand-600 dark:text-brand-400">
                                   {l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
@@ -834,7 +1031,51 @@ export default function Users() {
                               <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
                                 {l.group_name || '个人'}
                               </td>
+                              <td className="px-3 py-2">
+                                {l.review_status === 'pending' ? (
+                                  <Badge tone="yellow">待审核</Badge>
+                                ) : l.review_status === 'rejected' ? (
+                                  <Badge tone="red">已驳回</Badge>
+                                ) : l.status === 'active' ? (
+                                  <Badge tone="green">正常</Badge>
+                                ) : l.status === 'expired' ? (
+                                  <Badge tone="gray">已过期</Badge>
+                                ) : (
+                                  <Badge tone="gray">已停用</Badge>
+                                )}
+                              </td>
                               <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{l.click_count}</td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() =>
+                                      window.open(
+                                        `https://${l.domain_name || window.location.host}/${l.short_code}`,
+                                        '_blank',
+                                        'noopener',
+                                      )
+                                    }
+                                    className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                                    title="打开短链"
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingLink(l)}
+                                    className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+                                    title="编辑短链"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setDeletingLink(l)}
+                                    className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                                    title="删除短链"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -880,12 +1121,12 @@ export default function Users() {
                       {detailLogs.map((log) => (
                         <li key={log.id} className="px-3 py-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                              {log.action}
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                              {actionLabel(log.action)}
                             </span>
                             {log.target_type && (
                               <span className="text-xs text-gray-500 dark:text-gray-400">
-                                {log.target_type}
+                                {targetTypeLabel(log.target_type)}
                                 {log.target_id ? `#${log.target_id}` : ''}
                               </span>
                             )}
@@ -893,9 +1134,10 @@ export default function Users() {
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
                             <span className="font-mono">{log.ip || '-'}</span>
+                            {log.location && <span>{log.location}</span>}
                             {log.detail && (
                               <span className="max-w-full truncate" title={log.detail}>
-                                {log.detail}
+                                {describeDetail(log.detail)}
                               </span>
                             )}
                           </div>
@@ -1017,6 +1259,44 @@ export default function Users() {
         </p>
         <p className="mt-2 text-sm text-red-600 dark:text-red-400">
           该用户创建的短链及其访问数据会一并删除，操作不可恢复。
+        </p>
+      </Modal>
+
+      {/* 详情内短链编辑 */}
+      <EditLinkModal
+        link={editingLink}
+        groups={groups}
+        onClose={() => setEditingLink(null)}
+        onSaved={() => {
+          if (detail) void loadDetailLinks(detail.user.id, linksPage)
+        }}
+      />
+
+      {/* 详情内短链删除确认 */}
+      <Modal
+        open={!!deletingLink}
+        onClose={() => setDeletingLink(null)}
+        title="删除短链"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setDeletingLink(null)}>
+              取消
+            </Button>
+            <Button variant="danger" onClick={handleDeleteLink} loading={linkDeleteLoading}>
+              确认删除
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          确定删除短链「
+          {deletingLink?.domain_name
+            ? `${deletingLink.domain_name}/${deletingLink.short_code}`
+            : `/${deletingLink?.short_code}`}
+          」吗？
+        </p>
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+          删除后短链立即失效，访问数据将一并清除，操作不可恢复。
         </p>
       </Modal>
     </div>

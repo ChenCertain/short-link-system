@@ -26,6 +26,20 @@ async function canViewUser(db: D1Database, user: JWTPayload, targetId: number): 
   return hasGlobalPermission(db, user.user_id, 'user.manage');
 }
 
+/**
+ * 是否「最高权限账户」（网站初始化时创建的那个超级管理员）。
+ * 只有最高权限账户可以编辑 / 降级 / 删除其他超级管理员，避免多个超管因同级而互相无法管理。
+ * 迁移 0009 未执行时返回 false（退化为普通规则）。
+ */
+async function isRootAccount(db: D1Database, userId: number): Promise<boolean> {
+  try {
+    const row = await db.prepare('SELECT is_root FROM users WHERE id = ?').bind(userId).first<{ is_root: number }>();
+    return Number(row?.is_root || 0) === 1;
+  } catch {
+    return false;
+  }
+}
+
 /** 把扁平的组列表拼成「父组 / 子组」路径 */
 async function loadGroupPaths(db: D1Database): Promise<Map<number, string>> {
   const rows = await db.prepare('SELECT id, name, parent_id FROM project_groups').all<{
@@ -51,27 +65,54 @@ async function loadGroupPaths(db: D1Database): Promise<Map<number, string>> {
   return cache;
 }
 
-// ========== 获取用户列表 ==========
+// ========== 获取用户列表（支持按项目组 / 组内身份 / 角色 / 状态筛选） ==========
 users.get('/', requireGlobalPermission('user.manage'), async (c) => {
   const page = Math.max(1, parseInt(c.req.query('page') || '1'));
   const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
   const search = c.req.query('search') || '';
+  const groupId = parseInt(c.req.query('groupId') || '0') || 0;
+  const groupRole = c.req.query('groupRole') || '';
+  const role = c.req.query('role') || '';
+  const status = c.req.query('status') || '';
   const offset = (page - 1) * pageSize;
 
-  let query = `SELECT id, email, name, role, status, require_review, review_by, permissions,
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (search) {
+    conditions.push('(email LIKE ? OR name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  if (['super_admin', 'user'].includes(role)) {
+    conditions.push('role = ?');
+    params.push(role);
+  }
+  if (['active', 'disabled'].includes(status)) {
+    conditions.push('status = ?');
+    params.push(status);
+  }
+  if (groupId > 0) {
+    if (['admin', 'member'].includes(groupRole)) {
+      conditions.push('EXISTS (SELECT 1 FROM user_group_relations r WHERE r.user_id = users.id AND r.group_id = ? AND r.role = ?)');
+      params.push(groupId, groupRole);
+    } else {
+      conditions.push('EXISTS (SELECT 1 FROM user_group_relations r WHERE r.user_id = users.id AND r.group_id = ?)');
+      params.push(groupId);
+    }
+  } else if (groupRole === 'none') {
+    // 未加入任何项目组的用户
+    conditions.push('NOT EXISTS (SELECT 1 FROM user_group_relations r WHERE r.user_id = users.id)');
+  }
+
+  const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+  let query = `SELECT id, email, name, role, status, require_review, review_by, permissions, is_root,
       last_login_at, last_login_ip, created_at,
       CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END AS password_set,
       (SELECT COUNT(*) FROM short_links WHERE created_by = users.id) AS link_count,
       (SELECT COUNT(*) FROM user_group_relations WHERE user_id = users.id) AS group_count
-      FROM users`;
-  let countQuery = 'SELECT COUNT(*) as total FROM users';
-  const params: (string | number)[] = [];
-
-  if (search) {
-    query += ' WHERE email LIKE ? OR name LIKE ?';
-    countQuery += ' WHERE email LIKE ? OR name LIKE ?';
-    params.push(`%${search}%`, `%${search}%`);
-  }
+      FROM users${where}`;
+  const countQuery = `SELECT COUNT(*) as total FROM users${where}`;
 
   query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   let list: { results: { id: number; role: string; permissions: string | null }[] };
@@ -82,18 +123,41 @@ users.get('/', requireGlobalPermission('user.manage'), async (c) => {
       permissions: string | null;
     }>();
   } catch {
-    // 迁移未执行（users.permissions 不存在）时降级
-    list = await c.env.DB.prepare(query.replace('review_by, permissions,', 'review_by, NULL AS permissions,'))
+    // 迁移未执行（users.permissions / users.is_root 不存在）时降级
+    list = await c.env.DB.prepare(query.replace('permissions, is_root,', 'NULL AS permissions, 0 AS is_root,'))
       .bind(...params, pageSize, offset)
       .all<{ id: number; role: string; permissions: string | null }>();
   }
   const countResult = await c.env.DB.prepare(countQuery).bind(...params).first<{ total: number }>();
+
+  // 附加每个用户所属项目组（按组分类展示 / 筛选时需要）
+  const groupPaths = await loadGroupPaths(c.env.DB);
+  const userGroups: Record<number, { id: number; name: string; path: string; role: string }[]> = {};
+  const ids = list.results.map((u) => u.id);
+  if (ids.length > 0) {
+    const rels = await c.env.DB.prepare(
+      `SELECT ugr.user_id, ugr.group_id, ugr.role, g.name
+       FROM user_group_relations ugr JOIN project_groups g ON g.id = ugr.group_id
+       WHERE ugr.user_id IN (${ids.map(() => '?').join(',')})`,
+    )
+      .bind(...ids)
+      .all<{ user_id: number; group_id: number; role: string; name: string }>();
+    for (const rel of rels.results) {
+      (userGroups[rel.user_id] ||= []).push({
+        id: rel.group_id,
+        name: rel.name,
+        path: groupPaths.get(rel.group_id) || rel.name,
+        role: rel.role,
+      });
+    }
+  }
 
   return jsonResponse({
     users: list.results.map((u) => ({
       ...u,
       role: u.role === 'super_admin' ? 'super_admin' : 'user',
       global_permissions: parsePermissionJson(u.permissions),
+      groups: userGroups[u.id] || [],
     })),
     total: countResult?.total || 0,
     page,
@@ -186,10 +250,21 @@ users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
   }>();
   const currentUser = c.get('user');
 
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first<{ id: number; role: string }>();
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first<{ id: number; role: string; is_root?: number }>();
   if (!user) {
     return jsonResponse({ error: '用户不存在' }, 404);
   }
+
+  // 最高权限账户：只有它自己能维护，且不能被降级或禁用
+  if (Number(user.is_root || 0) === 1) {
+    if (!(await isRootAccount(c.env.DB, currentUser.user_id))) {
+      return jsonResponse({ error: '最高权限账户只能由该账户本人修改' }, 403);
+    }
+    if ((body.role && body.role !== 'super_admin') || body.status === 'disabled') {
+      return jsonResponse({ error: '最高权限账户不能被降级或禁用' }, 400);
+    }
+  }
+
   if (body.role && !['super_admin', 'user'].includes(body.role)) {
     return jsonResponse({ error: '无效的角色' }, 400);
   }
@@ -277,8 +352,11 @@ users.put('/:id/permissions', async (c) => {
     if (incoming[key] !== undefined) overrides[key] = incoming[key] === true;
   }
 
-  const target = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(targetId).first<{ role: string }>();
+  const target = await c.env.DB.prepare('SELECT id, role, is_root FROM users WHERE id = ?').bind(targetId).first<{ role: string; is_root?: number }>();
   if (!target) return jsonResponse({ error: '用户不存在' }, 404);
+  if (Number(target.is_root || 0) === 1 && !(await isRootAccount(c.env.DB, currentUser.user_id))) {
+    return jsonResponse({ error: '最高权限账户的权限只能由该账户本人调整' }, 403);
+  }
   if (target.role === 'super_admin' && Object.values(overrides).some((v) => v === false)) {
     return jsonResponse({ error: '超级管理员始终拥有全部全局权限' }, 400);
   }
@@ -311,12 +389,18 @@ users.delete('/:id', requireGlobalPermission('user.manage'), async (c) => {
     return jsonResponse({ error: '不能删除自己' }, 400);
   }
 
-  const user = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(userId).first<{ role: string }>();
+  const user = await c.env.DB.prepare('SELECT id, role, is_root FROM users WHERE id = ?').bind(userId).first<{ role: string; is_root?: number }>();
   if (!user) {
     return jsonResponse({ error: '用户不存在' }, 404);
   }
+  if (Number(user.is_root || 0) === 1) {
+    return jsonResponse({ error: '最高权限账户不能被删除' }, 400);
+  }
+  // 其他超级管理员只能由最高权限账户删除（避免同级超管互相无法管理）
   if (user.role === 'super_admin') {
-    return jsonResponse({ error: '不能删除超级管理员' }, 400);
+    if (!(await isRootAccount(c.env.DB, currentUser.user_id))) {
+      return jsonResponse({ error: '只有最高权限账户可以删除超级管理员' }, 403);
+    }
   }
 
   // 先清理关联数据，避免外键约束导致删除失败
@@ -346,7 +430,7 @@ users.get('/:id', async (c) => {
     return jsonResponse({ error: '权限不足' }, 403);
   }
 
-  const detailSql = `SELECT id, email, name, role, status, require_review, review_by, permissions,
+  const detailSql = `SELECT id, email, name, role, status, require_review, review_by, permissions, is_root,
       last_login_at, last_login_ip, created_at, updated_at,
       CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END AS password_set
      FROM users WHERE id = ?`;
@@ -354,8 +438,8 @@ users.get('/:id', async (c) => {
   try {
     user = await c.env.DB.prepare(detailSql).bind(userId).first<{ id: number; role: string; permissions: string | null }>();
   } catch {
-    // 迁移未执行（users.permissions 不存在）时降级
-    user = await c.env.DB.prepare(detailSql.replace('review_by, permissions,', 'review_by, NULL AS permissions,'))
+    // 迁移未执行（users.permissions / users.is_root 不存在）时降级
+    user = await c.env.DB.prepare(detailSql.replace('permissions, is_root,', 'NULL AS permissions, 0 AS is_root,'))
       .bind(userId)
       .first<{ id: number; role: string; permissions: string | null }>();
   }
@@ -398,6 +482,7 @@ users.get('/:id', async (c) => {
 
   const links = await c.env.DB.prepare(
     `SELECT sl.id, sl.short_code, sl.target_url, sl.name, sl.status, sl.click_count, sl.created_at,
+      sl.custom_alias, sl.redirect_type, sl.expires_at, sl.domain_id,
       sl.group_id, d.domain as domain_name, pg.name as group_name
      FROM short_links sl
      LEFT JOIN domains d ON sl.domain_id = d.id
@@ -406,17 +491,34 @@ users.get('/:id', async (c) => {
      ORDER BY sl.created_at DESC LIMIT 10`
   ).bind(userId).all();
 
-  const logs = await c.env.DB.prepare(
-    `SELECT id, action, target_type, target_id, detail, ip, timestamp
+  const logSql = `SELECT id, action, target_type, target_id, detail, ip, timestamp, location
      FROM audit_logs WHERE user_id = ?
-     ORDER BY timestamp DESC, id DESC LIMIT 20`
-  ).bind(userId).all();
+     ORDER BY timestamp DESC, id DESC LIMIT 20`;
+  let logs: { results: unknown[] } = { results: [] };
+  try {
+    logs = await c.env.DB.prepare(logSql).bind(userId).all();
+  } catch {
+    // 迁移 0008 未执行时降级
+    logs = await c.env.DB.prepare(logSql.replace(', location', ', NULL AS location')).bind(userId).all();
+  }
 
-  const ips = await c.env.DB.prepare(
-    `SELECT ip, COUNT(*) as count, MAX(timestamp) as last_seen
+  const ipSql = `SELECT ip, COUNT(*) as count, MAX(timestamp) as last_seen,
+      (SELECT a2.location FROM audit_logs a2
+        WHERE a2.user_id = audit_logs.user_id AND a2.ip = audit_logs.ip AND a2.location IS NOT NULL
+        ORDER BY a2.timestamp DESC, a2.id DESC LIMIT 1) as location
      FROM audit_logs WHERE user_id = ? AND ip IS NOT NULL AND ip <> ''
-     GROUP BY ip ORDER BY last_seen DESC LIMIT 10`
-  ).bind(userId).all();
+     GROUP BY ip ORDER BY last_seen DESC LIMIT 10`;
+  let ips: { results: unknown[] } = { results: [] };
+  try {
+    ips = await c.env.DB.prepare(ipSql).bind(userId).all();
+  } catch {
+    // 迁移 0008 未执行时降级
+    ips = await c.env.DB.prepare(
+      `SELECT ip, COUNT(*) as count, MAX(timestamp) as last_seen, NULL AS location
+       FROM audit_logs WHERE user_id = ? AND ip IS NOT NULL AND ip <> ''
+       GROUP BY ip ORDER BY last_seen DESC LIMIT 10`,
+    ).bind(userId).all();
+  }
 
   const managedGroupIds = await getManagedGroupIds(c.env.DB, userId);
 

@@ -109,13 +109,21 @@ auth.post('/init', async (c) => {
   // 标记验证码已使用
   await c.env.DB.prepare('UPDATE verification_codes SET used = 1 WHERE id = ?').bind(codeRecord.id).run();
 
-  // 创建管理员账户
+  // 创建管理员账户：初始化时创建的这个超级管理员是「最高权限账户」（is_root = 1）
   const passwordHash = await hashPassword(body.password);
-  const result2 = await c.env.DB.prepare(
-    'INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)'
-  ).bind(body.email, passwordHash, body.name, 'super_admin', 'active').run();
-
-  const userId = result2.meta.last_row_id;
+  let userId: number;
+  try {
+    const created = await c.env.DB.prepare(
+      'INSERT INTO users (email, password_hash, name, role, status, is_root) VALUES (?, ?, ?, ?, ?, 1)'
+    ).bind(body.email, passwordHash, body.name, 'super_admin', 'active').run();
+    userId = Number(created.meta.last_row_id);
+  } catch {
+    // 迁移 0009 未执行时降级
+    const created = await c.env.DB.prepare(
+      'INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)'
+    ).bind(body.email, passwordHash, body.name, 'super_admin', 'active').run();
+    userId = Number(created.meta.last_row_id);
+  }
 
   // 标记系统已初始化
   await c.env.DB.prepare(
@@ -131,7 +139,11 @@ auth.post('/init', async (c) => {
     c.env.JWT_SECRET
   );
 
-  return jsonResponse({ success: true, token, user: { id: userId, email: body.email, name: body.name, role: 'super_admin' } });
+  return jsonResponse({
+    success: true,
+    token,
+    user: { id: userId, email: body.email, name: body.name, role: 'super_admin', is_root: true },
+  });
 });
 
 // ========== 发送验证码 ==========
@@ -274,6 +286,7 @@ auth.post('/verify-login', async (c) => {
     name: string;
     role: string;
     status: string;
+    is_root?: number;
   }>();
 
   if (!user) {
@@ -336,6 +349,7 @@ auth.post('/verify-login', async (c) => {
       name: user.name,
       role,
       status: user.status,
+      is_root: Number(user.is_root || 0) === 1,
       managed_group_ids: managedGroupIds,
     },
   });
@@ -358,7 +372,7 @@ auth.post('/setup-password', async (c) => {
   }
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, password_hash, name, role, status FROM users WHERE email = ?'
+    'SELECT * FROM users WHERE email = ?'
   ).bind(body.email).first<{
     id: number;
     email: string;
@@ -366,6 +380,7 @@ auth.post('/setup-password', async (c) => {
     name: string;
     role: string;
     status: string;
+    is_root?: number;
   }>();
 
   if (!user) {
@@ -412,6 +427,7 @@ auth.post('/setup-password', async (c) => {
       name: user.name,
       role,
       status: user.status,
+      is_root: Number(user.is_root || 0) === 1,
       managed_group_ids: managedGroupIds,
     },
   });
@@ -430,10 +446,19 @@ auth.get('/me', async (c) => {
     return jsonResponse({ error: '登录已过期' }, 401);
   }
 
-  const user = await c.env.DB.prepare(
-    `SELECT id, email, name, role, status, require_review, review_by, last_login_at, last_login_ip, created_at
-     FROM users WHERE id = ?`
-  ).bind(payload.user_id).first<{ id: number; role: string; status: string }>();
+  const meSql = `SELECT id, email, name, role, status, require_review, review_by, last_login_at, last_login_ip, created_at, is_root
+     FROM users WHERE id = ?`;
+  let user: { id: number; role: string; status: string; is_root?: number } | null = null;
+  try {
+    user = await c.env.DB.prepare(meSql)
+      .bind(payload.user_id)
+      .first<{ id: number; role: string; status: string; is_root?: number }>();
+  } catch {
+    // 迁移 0009 未执行时降级
+    user = await c.env.DB.prepare(meSql.replace(', is_root', ', 0 AS is_root'))
+      .bind(payload.user_id)
+      .first<{ id: number; role: string; status: string; is_root?: number }>();
+  }
 
   if (!user) {
     return jsonResponse({ error: '用户不存在' }, 404);
@@ -465,6 +490,7 @@ auth.get('/me', async (c) => {
     user: {
       ...user,
       role: user.role === 'super_admin' ? 'super_admin' : 'user',
+      is_root: Number(user.is_root || 0) === 1,
       managed_group_ids: managedGroupIds,
       permissions: { global: globalPermissions, groups: groupPermissions },
     },

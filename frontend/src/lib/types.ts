@@ -19,6 +19,8 @@ export interface AuthUser {
   last_login_ip?: string | null
   /** 该用户作为管理员的项目组 id 列表（项目组管理员） */
   managed_group_ids?: number[]
+  /** 是否最高权限账户（站点初始化时创建的超级管理员） */
+  is_root?: boolean
   /** 全局权限 + 各项目组内的有效权限 */
   permissions?: {
     global: PermissionMap
@@ -165,6 +167,8 @@ export interface AuditLog {
   target_id: number | null
   detail: string | null
   ip: string | null
+  /** IP 归属地（Cloudflare 边缘解析，旧数据可能为空） */
+  location?: string | null
   timestamp: number
 }
 
@@ -174,6 +178,8 @@ export interface UserItem {
   name: string
   role: UserRole
   status: UserStatus
+  /** 最高权限账户（站点初始化的超级管理员），后端返回 0/1 */
+  is_root?: number | boolean
   require_review?: number
   review_by?: ReviewBy
   last_login_at?: number | null
@@ -181,6 +187,8 @@ export interface UserItem {
   created_at: number
   /** 1=已设置密码，0=尚未设置（首次登录时自行设置） */
   password_set?: number
+  /** 所属项目组（列表接口返回，便于按组分类展示） */
+  groups?: { id: number; name: string; path: string; role: 'admin' | 'member' }[]
   /** 创建的短链数 / 加入的项目组数 */
   link_count?: number
   group_count?: number
@@ -211,7 +219,7 @@ export interface UserDetail {
   link_summary: { total: number; active: number; clicks: number }
   links: (ShortLink & { group_name?: string | null })[]
   logs: AuditLog[]
-  ips: { ip: string; count: number; last_seen: number }[]
+  ips: { ip: string; count: number; last_seen: number; location?: string | null }[]
   is_self: boolean
 }
 

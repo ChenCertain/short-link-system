@@ -14,6 +14,7 @@ const Overview = lazy(() => import('@/pages/dashboard/Overview'))
 const Links = lazy(() => import('@/pages/dashboard/Links'))
 const LinkDetail = lazy(() => import('@/pages/dashboard/LinkDetail'))
 const Groups = lazy(() => import('@/pages/dashboard/Groups'))
+const Members = lazy(() => import('@/pages/dashboard/Members'))
 const Review = lazy(() => import('@/pages/dashboard/Review'))
 const Analytics = lazy(() => import('@/pages/dashboard/Analytics'))
 const Users = lazy(() => import('@/pages/dashboard/Users'))
@@ -61,6 +62,14 @@ export default function App() {
                 <Route path="links" element={<Links />} />
                 <Route path="links/:id" element={<LinkDetail />} />
                 <Route path="groups" element={<Groups />} />
+                <Route
+                  path="members"
+                  element={
+                    <ProtectedRoute groupAdmin>
+                      <Members />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="review"
                   element={

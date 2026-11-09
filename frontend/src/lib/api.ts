@@ -132,11 +132,27 @@ export const publicApi = {
 
 // ============ 用户管理 ============
 export const usersApi = {
-  list: (params: { page?: number; pageSize?: number; search?: string } = {}) => {
+  list: (
+    params: {
+      page?: number
+      pageSize?: number
+      search?: string
+      /** 按项目组筛选（组及其子组成员都算） */
+      groupId?: number
+      /** 组内身份：admin / member / none（未加入任何项目组） */
+      groupRole?: 'admin' | 'member' | 'none' | ''
+      role?: 'super_admin' | 'user' | ''
+      status?: 'active' | 'disabled' | ''
+    } = {},
+  ) => {
     const q = new URLSearchParams()
     if (params.page) q.set('page', String(params.page))
     if (params.pageSize) q.set('pageSize', String(params.pageSize))
     if (params.search) q.set('search', params.search)
+    if (params.groupId) q.set('groupId', String(params.groupId))
+    if (params.groupRole) q.set('groupRole', params.groupRole)
+    if (params.role) q.set('role', params.role)
+    if (params.status) q.set('status', params.status)
     return get<{ users: UserItem[]; total: number; page: number; pageSize: number }>(`/api/users?${q}`)
   },
   detail: (id: number) => get<UserDetail>(`/api/users/${id}`),
@@ -216,6 +232,42 @@ export const groupsApi = {
     post<{ success: boolean }>(`/api/groups/${id}/domains`, { domain_id: domainId }),
   unbindDomain: (id: number, domainId: number) =>
     del<{ success: boolean }>(`/api/groups/${id}/domains/${domainId}`),
+}
+
+// ============ 成员管理（组管理员视角：管理范围内的全部组成员） ============
+export interface ScopedMember {
+  id: number
+  email: string
+  name: string
+  role: string
+  status: string
+  group_role: 'admin' | 'member'
+  permission_role: 'admin' | 'member'
+  permissions_override: PermissionMap
+  joined_at: number
+  last_login_at: number | null
+  last_login_ip: string | null
+  link_count: number
+  is_self: boolean
+  can_edit_permission: boolean
+  can_edit_role: boolean
+  can_remove: boolean
+}
+
+export interface ScopedMemberGroup {
+  id: number
+  name: string
+  parent_id: number | null
+  path: string
+  member_count: number
+  can_config_permission: boolean
+  can_set_role: boolean
+  can_remove_member: boolean
+  members: ScopedMember[]
+}
+
+export const membersApi = {
+  scope: () => get<{ is_super_admin: boolean; groups: ScopedMemberGroup[] }>('/api/members/scope'),
 }
 
 // ============ 域名管理 ============

@@ -15,6 +15,7 @@ import {
   Sun,
   UserRound,
   Users,
+  UsersRound,
   X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -32,6 +33,8 @@ interface NavItem {
   groupPermission?: string
   /** 需要某项全局权限（超级管理员默认拥有） */
   globalPermission?: string
+  /** 需要是超级管理员或项目组管理员（成员管理） */
+  needGroupAdmin?: boolean
   end?: boolean
 }
 
@@ -39,6 +42,7 @@ const navItems: NavItem[] = [
   { to: '/dashboard', label: '概览', icon: LayoutDashboard, superOnly: true, end: true },
   { to: '/dashboard/links', label: '短链管理', icon: Link2 },
   { to: '/dashboard/groups', label: '项目组', icon: FolderTree },
+  { to: '/dashboard/members', label: '成员管理', icon: UsersRound, needGroupAdmin: true },
   { to: '/dashboard/review', label: '短链审核', icon: ShieldCheck, groupPermission: 'link.review' },
   { to: '/dashboard/stats', label: '指标统计', icon: BarChart3, superOnly: true },
   { to: '/dashboard/users', label: '用户管理', icon: Users, globalPermission: 'user.manage' },
@@ -66,6 +70,7 @@ export default function Layout() {
     if (item.superOnly) return isSuperAdmin
     if (item.globalPermission) return isSuperAdmin || globalPerms[item.globalPermission] === true
     if (item.groupPermission) return isSuperAdmin || hasAnyGroupPermission(item.groupPermission)
+    if (item.needGroupAdmin) return isSuperAdmin || isGroupAdmin
     return true
   })
 
