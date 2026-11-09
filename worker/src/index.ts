@@ -47,7 +47,9 @@ app.notFound((c) => {
 });
 
 // ========== 健康检查 ==========
-app.get('/api/health', (c) => jsonResponse({ status: 'ok', timestamp: Date.now() }));
+app.get('/api/health', (c) =>
+  jsonResponse({ status: 'ok', service: 'short-link-system', timestamp: Date.now() })
+);
 
 // ========== API 路由 ==========
 app.route('/api/auth', auth);

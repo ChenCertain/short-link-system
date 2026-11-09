@@ -298,7 +298,12 @@ export default function Domains() {
           <div className="space-y-4 text-sm">
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-              请在 Cloudflare DNS 中添加以下记录，等待生效后回到列表点击「验证」。
+              <span>
+                两种接入方式任选其一：
+                <br />① 在 Cloudflare DNS 添加下方 CNAME 记录；
+                <br />② 在 Worker → Settings → Domains &amp; Routes 直接绑定该域名（Cloudflare 自动生成代理记录，无需 CNAME）。
+                <br />配置完成后回到列表点击「验证」。
+              </span>
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700">
