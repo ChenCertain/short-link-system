@@ -20,7 +20,7 @@ import {
   getManageableDomainIds,
   isDomainBoundToAncestor,
   getGroupPermissions,
-  getGroupPermissionRole,
+  getGroupPermissionsForMembers,
   hasGroupPermission,
   getManagedGroupIds,
   getManagedScopeIds,
@@ -204,9 +204,14 @@ groups.get('/:id', async (c) => {
   const memberPermissions: Record<number, Record<string, boolean>> = {};
   const memberPermissionRole: Record<number, 'admin' | 'member' | null> = {};
   if (canManage) {
+    const batch = await getGroupPermissionsForMembers(
+      c.env.DB,
+      members.results.map((member) => member.id),
+      groupId,
+    );
     for (const member of members.results) {
-      memberPermissions[member.id] = await getGroupPermissions(c.env.DB, member.id, groupId);
-      memberPermissionRole[member.id] = await getGroupPermissionRole(c.env.DB, member.id, groupId);
+      memberPermissions[member.id] = batch[member.id]?.permissions || {};
+      memberPermissionRole[member.id] = batch[member.id]?.role ?? null;
     }
   }
 

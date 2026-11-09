@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../types';
 import { escapeHtml, getRequestIP, hashIP, normalizeHost, RESERVED_CODES } from '../utils';
-import { fetchIndexHtml, serveStatic } from '../assets';
+import { fetchIndexHtml, serveStatic, HTML_SECURITY_HEADERS } from '../assets';
 import { LINK_CACHE_EDGE_TTL, LINK_CACHE_TTL, linkCacheKey } from '../cache';
 
 const redirect = new Hono<{ Bindings: Env }>();
@@ -261,6 +261,7 @@ async function spaPage(c: Context<{ Bindings: Env }>, status: number): Promise<R
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
+      ...HTML_SECURITY_HEADERS,
     },
   });
 }

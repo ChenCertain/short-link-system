@@ -374,6 +374,90 @@ export async function getGroupPermissionRole(
   return found ? 'member' : null;
 }
 
+/**
+ * 批量计算多个用户在指定项目组内的有效权限与生效身份。
+ * 组详情页需要为每个成员展示权限，逐成员调用 getGroupPermissions 会产生
+ * 「成员数 × 祖链层数」次串行查询，这里统一为两次查询。
+ */
+export async function getGroupPermissionsForMembers(
+  db: D1Database,
+  userIds: number[],
+  groupId: number | null,
+): Promise<Record<number, { permissions: Record<string, boolean>; role: 'admin' | 'member' | null }>> {
+  const result: Record<number, { permissions: Record<string, boolean>; role: 'admin' | 'member' | null }> = {};
+  if (!groupId || userIds.length === 0) {
+    for (const userId of userIds) {
+      result[userId] = { permissions: buildPermissionMap(GROUP_PERMISSION_KEYS, [], {}), role: null };
+    }
+    return result;
+  }
+
+  // 祖链（含自身，最多 20 层）
+  const groups = await db
+    .prepare('SELECT id, parent_id FROM project_groups')
+    .all<{ id: number; parent_id: number | null }>();
+  const parentOf = new Map<number, number | null>();
+  for (const group of groups.results) parentOf.set(group.id, group.parent_id);
+
+  const chain: number[] = [];
+  let current: number | null = groupId;
+  for (let i = 0; i < 20 && current; i++) {
+    chain.push(current);
+    current = parentOf.get(current) ?? null;
+  }
+
+  type RelationRow = { user_id: number; group_id: number; role: 'admin' | 'member'; permissions: string | null };
+  let relations: RelationRow[] = [];
+  const placeholders = chain.map(() => '?').join(',');
+  try {
+    const rows = await db
+      .prepare(
+        `SELECT user_id, group_id, role, permissions FROM user_group_relations WHERE group_id IN (${placeholders})`,
+      )
+      .bind(...chain)
+      .all<RelationRow>();
+    relations = rows.results;
+  } catch {
+    // 迁移未执行（缺少 permissions 列）时降级为仅按身份使用默认权限
+    const rows = await db
+      .prepare(`SELECT user_id, group_id, role FROM user_group_relations WHERE group_id IN (${placeholders})`)
+      .bind(...chain)
+      .all<{ user_id: number; group_id: number; role: 'admin' | 'member' }>();
+    relations = rows.results.map((row) => ({ ...row, permissions: null }));
+  }
+
+  const relationOf = new Map<string, RelationRow>();
+  for (const relation of relations) relationOf.set(`${relation.user_id}:${relation.group_id}`, relation);
+
+  const depthOf = new Map<number, number>();
+  chain.forEach((id, index) => depthOf.set(id, index));
+
+  for (const userId of userIds) {
+    let nearest: RelationRow | null = null;
+    let isAdmin = false;
+    let found = false;
+    for (const id of chain) {
+      const relation = relationOf.get(`${userId}:${id}`);
+      if (!relation) continue;
+      found = true;
+      if (!nearest || (depthOf.get(id) ?? 0) < (depthOf.get(nearest.group_id) ?? 0)) nearest = relation;
+      if (relation.role === 'admin') isAdmin = true;
+    }
+
+    if (!found || !nearest) {
+      result[userId] = { permissions: buildPermissionMap(GROUP_PERMISSION_KEYS, [], {}), role: null };
+      continue;
+    }
+    const defaults = isAdmin ? ADMIN_DEFAULT_PERMISSIONS : MEMBER_DEFAULT_PERMISSIONS;
+    result[userId] = {
+      permissions: buildPermissionMap(GROUP_PERMISSION_KEYS, defaults, parsePermissionJson(nearest.permissions)),
+      role: isAdmin ? 'admin' : 'member',
+    };
+  }
+
+  return result;
+}
+
 /** 判断用户在组内是否具备某项权限（超管由调用方先行短路） */
 export async function hasGroupPermission(
   db: D1Database,

@@ -248,14 +248,16 @@ export function parseUserAgent(ua: string | null): { browser: string; os: string
   else if (/Firefox\//.test(ua)) browser = 'Firefox';
   else if (/Safari\//.test(ua)) browser = 'Safari';
 
+  // 注意顺序：iOS 的 UA 里包含 "like Mac OS X"，必须先于 macOS 判断
   if (/Windows/.test(ua)) os = 'Windows';
-  else if (/Mac OS/.test(ua)) os = 'macOS';
+  else if (/iPhone|iPad|iPod/.test(ua)) os = 'iOS';
   else if (/Android/.test(ua)) os = 'Android';
-  else if (/iPhone|iPad/.test(ua)) os = 'iOS';
+  else if (/Mac OS/.test(ua)) os = 'macOS';
   else if (/Linux/.test(ua)) os = 'Linux';
 
-  if (/Mobile|Android|iPhone/.test(ua)) device = 'Mobile';
-  else if (/iPad|Tablet/.test(ua)) device = 'Tablet';
+  // 平板需先于手机判断（部分平板 UA 同时包含 Mobile）
+  if (/iPad|Tablet/.test(ua)) device = 'Tablet';
+  else if (/Mobile|Android|iPhone/.test(ua)) device = 'Mobile';
 
   return { browser, os, device };
 }

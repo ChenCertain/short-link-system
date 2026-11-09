@@ -261,23 +261,35 @@ export default function Home() {
         </section>
 
         {/* 结尾 CTA */}
-        <section className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
-          <div className="relative overflow-hidden rounded-3xl bg-gray-900 px-6 py-12 text-center dark:bg-gray-900">
-            <div className="pointer-events-none absolute -left-16 -top-16 h-56 w-56 rounded-full bg-brand-500/30 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-20 -right-10 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />
-            <h2 className="relative text-2xl font-bold tracking-tight text-white sm:text-3xl">
+        <section className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-20 sm:pt-20">
+          <div className="relative isolate overflow-hidden rounded-3xl bg-gray-900 px-6 py-14 text-center shadow-xl shadow-gray-900/20 dark:bg-gray-900 dark:shadow-black/40">
+            <div className="pointer-events-none absolute -left-16 -top-16 -z-10 h-56 w-56 rounded-full bg-brand-500/30 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-20 -right-10 -z-10 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />
+            <span className="relative inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium text-white/80">
+              <Zap className="h-3.5 w-3.5" />
+              开始使用
+            </span>
+            <h2 className="relative mt-5 text-2xl font-bold tracking-tight text-white sm:text-3xl">
               登录后即可创建你的第一条短链
             </h2>
-            <p className="relative mx-auto mt-3 max-w-xl text-sm text-gray-300">
+            <p className="relative mx-auto mt-3 max-w-xl text-sm leading-relaxed text-gray-300">
               账户由管理员开通。如果还没有账户，请联系系统管理员获取访问权限。
             </p>
-            <Link
-              to={user ? '/dashboard/links' : '/login'}
-              className="relative mt-7 inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-100"
-            >
-              {user ? '进入控制台' : '前往登录'}
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+            <div className="relative mt-8 flex flex-wrap items-center justify-center gap-3">
+              <Link
+                to={user ? '/dashboard/links' : '/login'}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-100"
+              >
+                {user ? '进入控制台' : '前往登录'}
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <a
+                href="#features"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-5 py-3 text-sm font-semibold text-white/90 transition-colors hover:border-white/40 hover:bg-white/10"
+              >
+                了解功能
+              </a>
+            </div>
           </div>
         </section>
       </main>

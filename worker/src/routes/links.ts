@@ -218,12 +218,15 @@ links.get('/pending-reviews', authMiddleware, async (c) => {
     const relations = await c.env.DB.prepare(
       'SELECT group_id FROM user_group_relations WHERE user_id = ?'
     ).bind(currentUser.user_id).all<{ group_id: number }>();
-    const candidates = new Set<number>([...managedIds, ...relations.results.map((r) => r.group_id)]);
+    const candidates = [...new Set([...managedIds, ...relations.results.map((r) => r.group_id)])];
 
-    const reviewIds: number[] = [];
-    for (const id of candidates) {
-      if (await hasGroupPermission(c.env.DB, currentUser.user_id, id, 'link.review')) reviewIds.push(id);
-    }
+    // 一次性算出具备「审核组内短链」权限的组（避免逐组串行查询）
+    const reviewIds = await filterGroupsWithPermission(
+      c.env.DB,
+      currentUser.user_id,
+      candidates,
+      'link.review',
+    );
     if (reviewIds.length === 0) {
       return jsonResponse({ links: [] });
     }
@@ -252,14 +255,14 @@ links.post('/:id/review', authMiddleware, async (c) => {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
 
-  // 审核权限：超级管理员可审核全部（兜底）；其余用户需具备审核组的「审核组内短链」权限
+  // 审核权限：超级管理员可审核全部（兜底）；其余用户需具备审核组的「审核组内短链」权限。
+  // 与「待审核列表」的可见范围保持一致：只要组内拥有该权限即可操作，不强制要求是组管理员。
   if (currentUser.role !== 'super_admin') {
-    const managedIds = await expandManagedGroupIds(c.env.DB, currentUser.user_id);
-    if (!link.review_group_id || !managedIds.includes(link.review_group_id)) {
-      return jsonResponse({ error: '权限不足' }, 403);
-    }
-    if (!(await hasGroupPermission(c.env.DB, currentUser.user_id, link.review_group_id, 'link.review'))) {
-      return jsonResponse({ error: '你没有审核短链的权限' }, 403);
+    const allowed = link.review_group_id
+      ? await hasGroupPermission(c.env.DB, currentUser.user_id, link.review_group_id, 'link.review')
+      : false;
+    if (!allowed) {
+      return jsonResponse({ error: '你没有审核该短链的权限' }, 403);
     }
   }
   if (link.review_status !== 'pending') {
