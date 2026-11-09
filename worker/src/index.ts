@@ -3,6 +3,7 @@
 import { Hono } from 'hono';
 import type { Env } from './types';
 import { jsonResponse } from './utils';
+import { serveStatic } from './assets';
 
 // 路由模块
 import auth from './routes/auth';
@@ -44,7 +45,7 @@ app.notFound((c) => {
   if (c.req.path.startsWith('/api/')) {
     return c.json({ error: '接口不存在' }, 404);
   }
-  return c.env.ASSETS.fetch(c.req.raw);
+  return serveStatic(c);
 });
 
 // ========== 健康检查 ==========
@@ -75,17 +76,8 @@ app.all('*', async (c) => {
     return c.json({ error: '接口不存在' }, 404);
   }
 
-  const response = await c.env.ASSETS.fetch(c.req.raw);
-
-  // SPA 路由回退：非静态资源的前端路由统一返回 index.html
-  const accept = c.req.header('Accept') || '';
-  if (response.status === 404 && c.req.method === 'GET' && accept.includes('text/html')) {
-    const url = new URL(c.req.url);
-    url.pathname = '/index.html';
-    return c.env.ASSETS.fetch(new Request(url.toString(), { headers: { Accept: 'text/html' } }));
-  }
-
-  return response;
+  // 静态资源 + SPA 回退（带长缓存头，减少重复下载）
+  return serveStatic(c);
 });
 
 export default app;

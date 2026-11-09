@@ -4,6 +4,8 @@ import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
+import { getVisibleGroupIds, isGroupVisibleToUser } from '../permissions';
+import { invalidateLinkCache } from '../cache';
 
 const domains = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
@@ -17,11 +19,43 @@ domains.get('/', requireRole('super_admin'), async (c) => {
   return jsonResponse({ domains: allDomains.results });
 });
 
-// ========== 获取可用短链域名 ==========
+// ========== 获取可用短链域名（按权限范围返回） ==========
 domains.get('/short-link-domains', async (c) => {
+  const user = c.get('user');
+  const groupIdParam = c.req.query('groupId');
+
+  // 超级管理员：平台全部可用短链域名
+  if (user.role === 'super_admin') {
+    const list = await c.env.DB.prepare(
+      "SELECT id, domain, is_default_short_link FROM domains WHERE type IN ('short_link', 'both') AND status = 'active' ORDER BY is_default_short_link DESC, domain ASC"
+    ).all();
+    return jsonResponse({ domains: list.results });
+  }
+
+  // 普通用户：仅所在项目组（含子组）绑定的域名；未绑定则为空
+  let groupIds: number[];
+  const groupId = groupIdParam ? parseInt(groupIdParam) : NaN;
+  if (!Number.isNaN(groupId)) {
+    if (!(await isGroupVisibleToUser(c.env.DB, user.user_id, groupId))) {
+      return jsonResponse({ domains: [] });
+    }
+    groupIds = [groupId];
+  } else {
+    groupIds = await getVisibleGroupIds(c.env.DB, user.user_id);
+  }
+
+  if (groupIds.length === 0) {
+    return jsonResponse({ domains: [] });
+  }
+
   const list = await c.env.DB.prepare(
-    "SELECT id, domain, is_default_short_link FROM domains WHERE type IN ('short_link', 'both') AND status = 'active' ORDER BY is_default_short_link DESC, domain ASC"
-  ).all();
+    `SELECT DISTINCT d.id, d.domain, d.is_default_short_link FROM domains d
+     JOIN group_domain_relations gdr ON gdr.domain_id = d.id
+     WHERE gdr.group_id IN (${groupIds.map(() => '?').join(',')})
+       AND d.type IN ('short_link', 'both') AND d.status = 'active'
+     ORDER BY d.is_default_short_link DESC, d.domain ASC`
+  ).bind(...groupIds).all();
+
   return jsonResponse({ domains: list.results });
 });
 
@@ -335,7 +369,18 @@ domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
 domains.delete('/:id', requireRole('super_admin'), async (c) => {
   const domainId = parseInt(c.req.param('id'));
 
+  // 删除前取出受影响的短码，用于清理跳转缓存
+  const affected = await c.env.DB.prepare('SELECT short_code FROM short_links WHERE domain_id = ?')
+    .bind(domainId)
+    .all<{ short_code: string }>();
+
   await c.env.DB.prepare('DELETE FROM domains WHERE id = ?').bind(domainId).run();
+
+  if (affected.results.length > 0) {
+    c.executionCtx.waitUntil(
+      invalidateLinkCache(c.env, ...affected.results.map((row) => row.short_code))
+    );
+  }
 
   await logAudit(c.env.DB, c.env.KV, c.get('user').user_id, 'delete_domain', c.req.raw, 'domain', domainId);
 

@@ -62,10 +62,3 @@ export const ROLE_LABELS: Record<string, string> = {
   super_admin: '超级管理员',
   user: '普通用户',
 }
-
-export const STATUS_LABELS: Record<string, string> = {
-  active: '活跃',
-  disabled: '已停用',
-  expired: '已过期',
-  pending_verification: '待验证',
-}

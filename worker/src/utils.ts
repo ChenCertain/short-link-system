@@ -40,13 +40,6 @@ export function generateVerifyCode(): string {
   return Array.from(values, (v) => (v % 10).toString()).join('');
 }
 
-// 生成随机 Token
-export function generateToken(length: number = 32): string {
-  const values = new Uint8Array(length);
-  crypto.getRandomValues(values);
-  return Array.from(values, (v) => v.toString(16).padStart(2, '0')).join('');
-}
-
 // 简单的密码哈希（使用 Web Crypto SHA-256 + salt）
 // 注意：Workers 环境不支持 bcrypt，使用 PBKDF2 替代
 export async function hashPassword(password: string, salt?: string): Promise<string> {

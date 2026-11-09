@@ -8,6 +8,34 @@ interface TurnstileProps {
   theme?: 'light' | 'dark' | 'auto'
 }
 
+const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+let scriptPromise: Promise<void> | null = null
+
+// 仅在真正需要人机验证时按需加载脚本，避免每次访问都请求第三方资源
+function loadTurnstileScript(): Promise<void> {
+  if (window.turnstile) return Promise.resolve()
+  if (scriptPromise) return scriptPromise
+
+  scriptPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-turnstile]')
+    if (existing) {
+      existing.addEventListener('load', () => resolve())
+      existing.addEventListener('error', () => reject(new Error('Turnstile script load failed')))
+      return
+    }
+    const script = document.createElement('script')
+    script.src = SCRIPT_SRC
+    script.async = true
+    script.defer = true
+    script.dataset.turnstile = '1'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Turnstile script load failed'))
+    document.head.appendChild(script)
+  })
+
+  return scriptPromise
+}
+
 export function Turnstile({ siteKey, onToken, onExpire, resetKey, theme = 'auto' }: TurnstileProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const widgetIdRef = useRef<string | null>(null)
@@ -17,8 +45,7 @@ export function Turnstile({ siteKey, onToken, onExpire, resetKey, theme = 'auto'
     let cancelled = false
 
     const render = () => {
-      if (cancelled || !containerRef.current) return
-      if (!window.turnstile) return
+      if (cancelled || !containerRef.current || !window.turnstile) return
       // 清理旧 widget
       if (widgetIdRef.current) {
         try {
@@ -46,25 +73,12 @@ export function Turnstile({ siteKey, onToken, onExpire, resetKey, theme = 'auto'
       }
     }
 
-    // 脚本可能尚未加载完成，轮询等待
-    let attempts = 0
-    const timer = window.setInterval(() => {
-      if (window.turnstile) {
-        window.clearInterval(timer)
-        render()
-      } else if (++attempts > 100) {
-        window.clearInterval(timer)
-      }
-    }, 100)
-
-    if (window.turnstile) {
-      window.clearInterval(timer)
-      render()
-    }
+    loadTurnstileScript()
+      .then(render)
+      .catch((err) => console.error('Turnstile unavailable', err))
 
     return () => {
       cancelled = true
-      window.clearInterval(timer)
       if (widgetIdRef.current && window.turnstile) {
         try {
           window.turnstile.remove(widgetIdRef.current)

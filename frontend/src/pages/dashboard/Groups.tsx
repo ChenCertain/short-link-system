@@ -116,6 +116,7 @@ export default function Groups() {
   const [memberOpen, setMemberOpen] = useState(false)
   const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' as 'member' | 'admin' })
   const [addingMember, setAddingMember] = useState(false)
+  const [memberCandidates, setMemberCandidates] = useState<{ id: number; name: string; email: string }[]>([])
 
   const [domainOpen, setDomainOpen] = useState(false)
   const [domainId, setDomainId] = useState('')
@@ -288,9 +289,20 @@ export default function Groups() {
     }
   }
 
-  // 是否有管理该组的权限（超管或该项目组管理员）
+  // 是否有管理该组的权限（超管或该项目组管理员，含父组管理员）
   const canManageSelected = !!detail?.can_manage
   const canManageMembers = canManageSelected
+
+  const openMemberModal = () => {
+    setMemberForm({ user_id: '', role: 'member' })
+    setMemberOpen(true)
+    if (!isSuperAdmin && selectedId) {
+      groupsApi
+        .memberCandidates(selectedId)
+        .then((data) => setMemberCandidates(data.users))
+        .catch(() => setMemberCandidates([]))
+    }
+  }
 
   const boundDomainIds = new Set((detail?.domains || []).map((d) => d.id))
   const availableDomains = allDomains.filter(
@@ -359,9 +371,9 @@ export default function Groups() {
                   description={detail.group.description || '暂无描述'}
                   action={
                     <div className="flex flex-wrap gap-2">
-                      {/* 添加成员仅超级管理员可用 */}
-                      {isSuperAdmin && (
-                        <Button variant="outline" size="sm" onClick={() => setMemberOpen(true)}>
+                      {/* 超级管理员与项目组（含父组）管理员均可添加成员 */}
+                      {(isSuperAdmin || canManageMembers) && (
+                        <Button variant="outline" size="sm" onClick={openMemberModal}>
                           <UserPlus className="h-4 w-4" />
                           添加成员
                         </Button>
@@ -660,23 +672,32 @@ export default function Groups() {
               onChange={(e) => setMemberForm({ ...memberForm, user_id: e.target.value })}
             >
               <option value="">请选择用户</option>
-              {allUsers.map((u) => (
+              {(isSuperAdmin ? allUsers : memberCandidates).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}（{u.email}）
                 </option>
               ))}
             </Select>
+            {!isSuperAdmin && memberCandidates.length === 0 && (
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">暂无可添加的用户</p>
+            )}
           </div>
           <div>
             <Label htmlFor="m-role">组内角色</Label>
             <Select
               id="m-role"
               value={memberForm.role}
+              disabled={!isSuperAdmin}
               onChange={(e) => setMemberForm({ ...memberForm, role: e.target.value as 'member' | 'admin' })}
             >
               <option value="member">成员（可查看组内短链）</option>
               <option value="admin">组管理员（可审核短链、管理组内成员）</option>
             </Select>
+            {!isSuperAdmin && (
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                项目组管理员只能添加普通成员，管理员身份需由超级管理员授予
+              </p>
+            )}
           </div>
         </form>
       </Modal>

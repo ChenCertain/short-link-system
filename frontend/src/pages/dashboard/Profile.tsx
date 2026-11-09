@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AtSign, KeyRound, MailCheck, Save, ShieldAlert, UserRound } from 'lucide-react'
+import { KeyRound, Mail, MailCheck, Save, ShieldAlert, UserRound } from 'lucide-react'
 import { profileApi, setToken, type ProfileUser } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge, Button, Card, CardHeader, ErrorText, Input, Label, LoadingBlock } from '@/components/ui'
@@ -197,7 +197,7 @@ export default function Profile() {
           <div>
             <p className="text-xs text-gray-500 dark:text-gray-400">邮箱</p>
             <p className="mt-1 flex items-center gap-1.5 text-sm text-gray-900 dark:text-gray-100">
-              <AtSign className="h-3.5 w-3.5 text-gray-400" />
+              <Mail className="h-3.5 w-3.5 shrink-0 text-gray-400" />
               {profile.email}
             </p>
           </div>

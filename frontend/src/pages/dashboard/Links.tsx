@@ -58,6 +58,22 @@ const emptyForm: LinkForm = {
   redirect_type: '302',
 }
 
+// 目标链接协议：默认 https，可切换为 http
+const URL_PROTOCOLS = ['https', 'http'] as const
+
+function splitProtocol(url: string): { protocol: string; rest: string } {
+  const trimmed = (url || '').trim()
+  const matched = /^([a-z][a-z0-9+.-]*):\/\//i.exec(trimmed)
+  if (matched) {
+    return { protocol: matched[1].toLowerCase(), rest: trimmed.slice(matched[0].length) }
+  }
+  return { protocol: 'https', rest: trimmed }
+}
+
+function withProtocol(protocol: string, rest: string): string {
+  return `${protocol}://${rest.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')}`
+}
+
 function absoluteUrl(link: ShortLink) {
   const path = link.domain_name ? `https://${link.domain_name}/${link.short_code}` : `/${link.short_code}`
   return path.startsWith('/') ? `${window.location.origin}${path}` : path
@@ -150,6 +166,14 @@ export default function Links() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
+  const [filterGroup, setFilterGroup] = useState('')
+  const [filterDomain, setFilterDomain] = useState('')
+  const [filterCreator, setFilterCreator] = useState('')
+  const [filterOptions, setFilterOptions] = useState<{
+    groups: { id: number; name: string; parent_id: number | null }[]
+    domains: { id: number; domain: string }[]
+    creators: { id: number; name: string; email: string }[]
+  }>({ groups: [], domains: [], creators: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -161,12 +185,17 @@ export default function Links() {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState<LinkForm>(emptyForm)
+  const [createProtocol, setCreateProtocol] = useState<string>('https')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [createdUrl, setCreatedUrl] = useState('')
 
   const [editing, setEditing] = useState<ShortLink | null>(null)
   const [editForm, setEditForm] = useState<LinkForm>(emptyForm)
+  const [editDomains, setEditDomains] = useState<{ id: number; domain: string; is_default_short_link: number }[]>([])
+  const [editDomainsLoading, setEditDomainsLoading] = useState(false)
+  const [editProtocol, setEditProtocol] = useState<string>('https')
+  const [editClearPassword, setEditClearPassword] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState('')
 
@@ -195,7 +224,15 @@ export default function Links() {
     setLoading(true)
     setError('')
     try {
-      const data = await linksApi.list({ page, pageSize, search, status })
+      const data = await linksApi.list({
+        page,
+        pageSize,
+        search,
+        status,
+        groupId: filterGroup ? Number(filterGroup) : undefined,
+        domainId: filterDomain ? Number(filterDomain) : undefined,
+        creatorId: filterCreator ? Number(filterCreator) : undefined,
+      })
       setLinks(data.links)
       setTotal(data.total)
     } catch (err) {
@@ -203,7 +240,16 @@ export default function Links() {
     } finally {
       setLoading(false)
     }
-  }, [page, search, status])
+  }, [page, search, status, filterGroup, filterDomain, filterCreator])
+
+  const loadFilterOptions = useCallback(async () => {
+    try {
+      const data = await linksApi.filterOptions()
+      setFilterOptions({ groups: data.groups, domains: data.domains, creators: data.creators })
+    } catch {
+      // 筛选项加载失败时不影响列表本身
+    }
+  }, [])
 
   useEffect(() => {
     void loadLinks()
@@ -218,7 +264,8 @@ export default function Links() {
       .shortLinkDomains()
       .then((data) => setDomains(data.domains))
       .catch(() => setDomains([]))
-  }, [])
+    void loadFilterOptions()
+  }, [loadFilterOptions])
 
   const loadGroupDomains = useCallback(async (groupId: string) => {
     if (!groupId) {
@@ -245,7 +292,7 @@ export default function Links() {
     e.preventDefault()
     setCreateError('')
 
-    if (!createForm.target_url.trim()) {
+    if (!splitProtocol(createForm.target_url).rest.trim()) {
       setCreateError('请填写目标链接')
       return
     }
@@ -287,7 +334,9 @@ export default function Links() {
       })
       setCreatedUrl(result.short_url)
       setCreateForm(emptyForm)
+      setCreateProtocol('https')
       setGroupDomains([])
+      void loadFilterOptions()
       if (result.review_status === 'pending') {
         show('已提交审核，管理员通过后即可访问', 'info')
       } else {
@@ -304,6 +353,8 @@ export default function Links() {
   const openEdit = (link: ShortLink) => {
     setEditing(link)
     setEditError('')
+    setEditClearPassword(false)
+    setEditProtocol(splitProtocol(link.target_url).protocol)
     setEditForm({
       target_url: link.target_url,
       name: link.name || '',
@@ -314,6 +365,17 @@ export default function Links() {
       expires_at: timestampToLocalInput(link.expires_at),
       redirect_type: String(link.redirect_type),
     })
+
+    // 只加载当前用户有权限使用的域名
+    setEditDomains([])
+    setEditDomainsLoading(true)
+    const request = link.group_id
+      ? groupsApi.availableDomains(link.group_id)
+      : domainsApi.shortLinkDomains()
+    request
+      .then((data) => setEditDomains(data.domains))
+      .catch(() => setEditDomains([]))
+      .finally(() => setEditDomainsLoading(false))
   }
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -339,20 +401,43 @@ export default function Links() {
       return
     }
 
+    if (!splitProtocol(editForm.target_url).rest.trim()) {
+      setEditError('请填写目标链接')
+      return
+    }
+
     setSaving(true)
     try {
-      await linksApi.update(editing.id, {
+      const originalDomainId = editing.domain_id ? String(editing.domain_id) : ''
+      const payload: Parameters<typeof linksApi.update>[1] = {
         target_url: editForm.target_url,
         name: editForm.name,
         short_code: aliasInput,
         group_id: editForm.group_id ? Number(editForm.group_id) : null,
-        password: editForm.password,
         expires_at: localInputToTimestamp(editForm.expires_at),
         redirect_type: Number(editForm.redirect_type),
-      })
-      show('已保存修改', 'success')
+      }
+
+      // 仅当用户主动修改域名时才提交，避免无权限域名影响保存
+      if (editForm.domain_id !== originalDomainId) {
+        payload.domain_id = editForm.domain_id ? Number(editForm.domain_id) : null
+      }
+      // 密码留空表示不修改；勾选清除才置空
+      if (editForm.password) {
+        payload.password = editForm.password
+      } else if (editClearPassword) {
+        payload.password = ''
+      }
+
+      const result = await linksApi.update(editing.id, payload)
+      if (result.review_status === 'pending') {
+        show('已保存修改，并重新提交审核', 'info')
+      } else {
+        show('已保存修改', 'success')
+      }
       setEditing(null)
       void loadLinks()
+      void loadFilterOptions()
     } catch (err) {
       setEditError((err as Error).message)
     } finally {
@@ -489,6 +574,72 @@ export default function Links() {
             <option value="disabled">已停用</option>
             <option value="expired">已过期</option>
           </Select>
+          {groupOptions.length > 0 && (
+            <Select
+              className="w-44"
+              value={filterGroup}
+              onChange={(e) => {
+                setFilterGroup(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="">全部项目组</option>
+              {groupOptions.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.label}
+                </option>
+              ))}
+            </Select>
+          )}
+          {filterOptions.domains.length > 0 && (
+            <Select
+              className="w-48"
+              value={filterDomain}
+              onChange={(e) => {
+                setFilterDomain(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="">全部域名</option>
+              {filterOptions.domains.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.domain}
+                </option>
+              ))}
+            </Select>
+          )}
+          {filterOptions.creators.length > 0 && (
+            <Select
+              className="w-40"
+              value={filterCreator}
+              onChange={(e) => {
+                setFilterCreator(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="">全部创建人</option>
+              {filterOptions.creators.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name || c.email}
+                </option>
+              ))}
+            </Select>
+          )}
+          {(filterGroup || filterDomain || filterCreator || status) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setFilterGroup('')
+                setFilterDomain('')
+                setFilterCreator('')
+                setStatus('')
+                setPage(1)
+              }}
+            >
+              重置筛选
+            </Button>
+          )}
         </div>
 
         {error && <div className="px-4 pt-3"><ErrorText>{error}</ErrorText></div>}
@@ -551,6 +702,11 @@ export default function Links() {
                           {link.review_status === 'pending' && <Badge tone="yellow">待审核</Badge>}
                           {link.review_status === 'rejected' && <Badge tone="red">未通过</Badge>}
                         </div>
+                        {link.review_status === 'rejected' && link.review_note && (
+                          <p className="mt-1 max-w-[240px] break-words text-xs text-red-600 dark:text-red-400">
+                            驳回原因：{link.review_note}
+                          </p>
+                        )}
                       </td>
                       <td className="hidden px-4 py-3 text-gray-600 dark:text-gray-400 lg:table-cell">
                         {link.group_name || '-'}
@@ -668,12 +824,39 @@ export default function Links() {
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
             <Label htmlFor="target">目标链接 *</Label>
-            <Input
-              id="target"
-              placeholder="https://example.com/path"
-              value={createForm.target_url}
-              onChange={(e) => setCreateForm({ ...createForm, target_url: e.target.value })}
-            />
+            <div className="flex gap-2">
+              <Select
+                aria-label="协议"
+                className="w-24 shrink-0"
+                value={createProtocol}
+                onChange={(e) => {
+                  const protocol = e.target.value
+                  setCreateProtocol(protocol)
+                  setCreateForm({
+                    ...createForm,
+                    target_url: withProtocol(protocol, splitProtocol(createForm.target_url).rest),
+                  })
+                }}
+              >
+                {URL_PROTOCOLS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}://
+                  </option>
+                ))}
+              </Select>
+              <Input
+                id="target"
+                className="flex-1"
+                placeholder="example.com/path"
+                value={splitProtocol(createForm.target_url).rest}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, target_url: withProtocol(createProtocol, e.target.value) })
+                }
+              />
+            </div>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              默认使用 https，如目标站点仅支持 http 可切换协议
+            </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -750,13 +933,17 @@ export default function Links() {
                     ))}
                   </Select>
                 )
+              ) : domains.length === 0 ? (
+                <div className="flex h-10 items-center rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
+                  暂无可用域名
+                </div>
               ) : (
                 <Select
                   id="domain"
                   value={createForm.domain_id}
                   onChange={(e) => setCreateForm({ ...createForm, domain_id: e.target.value })}
                 >
-                  <option value="">{globalDefaultDomainId ? '跟随默认域名' : '暂无默认域名'}</option>
+                  <option value="">{globalDefaultDomainId ? '跟随默认域名' : '暂不指定域名'}</option>
                   {domains.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.domain}
@@ -772,9 +959,11 @@ export default function Links() {
                     : groupDomains.some((d) => d.is_default_short_link === 1)
                       ? '默认使用项目组设定的默认域名，也可手动切换'
                       : '该项目组未设置默认域名，请手动选择'
-                  : globalDefaultDomainId
-                    ? '未归属项目组时使用平台默认域名'
-                    : '平台未设置默认域名，短链将使用当前站点域名'}
+                  : domains.length === 0
+                    ? '你没有可用域名：需加入项目组且该项目组已绑定域名'
+                    : globalDefaultDomainId
+                      ? '未归属项目组时使用默认域名，也可手动切换'
+                      : '未设置默认域名，请手动选择'}
               </p>
             </div>
           </div>
@@ -837,6 +1026,13 @@ export default function Links() {
         }
       >
         <form onSubmit={handleSaveEdit} className="space-y-4">
+          {editing?.review_status === 'rejected' && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300">
+              <p className="font-medium">该短链未通过审核，暂不可访问</p>
+              {editing.review_note && <p className="mt-0.5 text-xs">驳回原因：{editing.review_note}</p>}
+              <p className="mt-1 text-xs">修改并保存后将自动重新提交审核；也可以直接删除该短链。</p>
+            </div>
+          )}
           <div>
             <Label htmlFor="edit-code">自定义别名（短码）</Label>
             <Input
@@ -851,11 +1047,35 @@ export default function Links() {
           </div>
           <div>
             <Label htmlFor="edit-target">目标链接</Label>
-            <Input
-              id="edit-target"
-              value={editForm.target_url}
-              onChange={(e) => setEditForm({ ...editForm, target_url: e.target.value })}
-            />
+            <div className="flex gap-2">
+              <Select
+                aria-label="协议"
+                className="w-24 shrink-0"
+                value={editProtocol}
+                onChange={(e) => {
+                  const protocol = e.target.value
+                  setEditProtocol(protocol)
+                  setEditForm({
+                    ...editForm,
+                    target_url: withProtocol(protocol, splitProtocol(editForm.target_url).rest),
+                  })
+                }}
+              >
+                {URL_PROTOCOLS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}://
+                  </option>
+                ))}
+              </Select>
+              <Input
+                id="edit-target"
+                className="flex-1"
+                value={splitProtocol(editForm.target_url).rest}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, target_url: withProtocol(editProtocol, e.target.value) })
+                }
+              />
+            </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -885,6 +1105,35 @@ export default function Links() {
               </p>
             </div>
           </div>
+          <div>
+            <Label htmlFor="edit-domain">短链域名</Label>
+            {editDomainsLoading ? (
+              <div className="flex h-10 items-center rounded-lg border border-gray-200 px-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                域名加载中...
+              </div>
+            ) : editDomains.length === 0 ? (
+              <div className="flex h-10 items-center rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
+                暂无可用域名
+              </div>
+            ) : (
+              <Select
+                id="edit-domain"
+                value={editForm.domain_id}
+                onChange={(e) => setEditForm({ ...editForm, domain_id: e.target.value })}
+              >
+                <option value="">不指定域名</option>
+                {editDomains.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.domain}
+                    {d.is_default_short_link ? '（默认）' : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              只能选择当前用户有权限使用的域名，修改后短链地址会随之变化
+            </p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <ExpiryField
               id="edit-expires"
@@ -908,9 +1157,19 @@ export default function Links() {
             <Input
               id="edit-pwd"
               type="password"
+              placeholder="留空则保持原密码不变"
               value={editForm.password}
               onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
             />
+            <label className="mt-2 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-gray-300"
+                checked={editClearPassword}
+                onChange={(e) => setEditClearPassword(e.target.checked)}
+              />
+              清除访问密码（取消密码保护）
+            </label>
           </div>
 
           {editError && <ErrorText>{editError}</ErrorText>}

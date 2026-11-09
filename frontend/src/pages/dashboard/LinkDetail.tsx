@@ -73,6 +73,14 @@ export default function LinkDetail() {
         返回短链列表
       </Link>
 
+      {link.review_status === 'rejected' && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300">
+          <p className="font-medium">该短链未通过审核，暂不可访问</p>
+          {link.review_note && <p className="mt-1 text-xs">驳回原因：{link.review_note}</p>}
+          <p className="mt-1 text-xs">可在「短链管理」中编辑后重新提交审核，或直接删除。</p>
+        </div>
+      )}
+
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">

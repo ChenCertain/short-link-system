@@ -45,3 +45,6 @@ WORKER_HOST = ""
 [assets]
 directory = "../frontend/dist"
 binding = "ASSETS"
+# 请求先经过 Worker，便于为带指纹的构建产物下发 immutable 强缓存头
+# （wrangler 3.x 仅支持布尔值；静态资源仍由 ASSETS 绑定直接返回）
+run_worker_first = true

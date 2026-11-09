@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
-import { isGroupAdminOf } from '../permissions';
+import { isGroupAdminOf, isGroupVisibleToUser } from '../permissions';
 
 const groups = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
@@ -62,21 +62,21 @@ groups.get('/', async (c) => {
   for (const rel of rels.results) {
     myRoleByGroup.set(rel.group_id, rel.role);
     visible.add(rel.group_id);
-    // 仅组管理员需要看到并可管理其所有子组；普通成员只看到自己所在的组
-    if (rel.role === 'admin') {
-      let queue = [rel.group_id];
-      const seen = new Set<number>();
-      while (queue.length) {
-        const next: number[] = [];
-        for (const gid of queue) {
-          if (seen.has(gid)) continue;
-          seen.add(gid);
-          visible.add(gid);
-          for (const g of rows) if (g.parent_id === gid) next.push(g.id);
-        }
-        queue = next;
+
+    // 父组级（无论成员还是管理员）都能看到全部子组：向下展开所有后代
+    let queue = [rel.group_id];
+    const seen = new Set<number>();
+    while (queue.length) {
+      const next: number[] = [];
+      for (const gid of queue) {
+        if (seen.has(gid)) continue;
+        seen.add(gid);
+        visible.add(gid);
+        for (const g of rows) if (g.parent_id === gid) next.push(g.id);
       }
+      queue = next;
     }
+
     // 添加所有祖先，保证树结构可展示
     let cur = byId.get(rel.group_id)?.parent_id ?? null;
     for (let i = 0; i < 20 && cur; i++) {
@@ -129,13 +129,13 @@ groups.get('/:id', async (c) => {
     return jsonResponse({ error: '项目组不存在' }, 404);
   }
 
-  // 可见性：超管 / 组成员 / 组管理员
+  // 可见性：超管 / 本组成员 / 祖先组成员（父组可见子组）
   const isSuperAdmin = currentUser.role === 'super_admin';
   if (!isSuperAdmin) {
     const member = await c.env.DB.prepare(
       'SELECT id FROM user_group_relations WHERE user_id = ? AND group_id = ?'
     ).bind(currentUser.user_id, groupId).first();
-    if (!member && !(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+    if (!member && !(await isGroupVisibleToUser(c.env.DB, currentUser.user_id, groupId))) {
       return jsonResponse({ error: '权限不足' }, 403);
     }
   }
@@ -174,17 +174,10 @@ groups.get('/:id', async (c) => {
      LIMIT 200`
   ).bind(groupId).all();
 
-  // 子组：管理员可见全部；普通成员仅可见自己已加入的子组（避免点击后 403）
-  const subGroups = canManage
-    ? await c.env.DB.prepare(
-        'SELECT id, name, description FROM project_groups WHERE parent_id = ?'
-      ).bind(groupId).all()
-    : await c.env.DB.prepare(
-        `SELECT pg.id, pg.name, pg.description
-         FROM project_groups pg
-         JOIN user_group_relations ugr ON ugr.group_id = pg.id
-         WHERE pg.parent_id = ? AND ugr.user_id = ?`
-      ).bind(groupId, currentUser.user_id).all();
+  // 子组：父组级（成员或管理员）都可查看全部子组
+  const subGroups = await c.env.DB.prepare(
+    'SELECT id, name, description FROM project_groups WHERE parent_id = ?'
+  ).bind(groupId).all();
 
   return jsonResponse({
     group,
@@ -208,12 +201,12 @@ groups.get('/:id/available-domains', async (c) => {
     return jsonResponse({ error: '项目组不存在' }, 404);
   }
 
-  // 可见性：超管 / 组成员 / 组管理员
+  // 可见性：超管 / 本组成员 / 祖先组成员（父组可见子组）
   if (currentUser.role !== 'super_admin') {
     const isMember = await c.env.DB.prepare(
       'SELECT id FROM user_group_relations WHERE user_id = ? AND group_id = ?'
     ).bind(currentUser.user_id, groupId).first();
-    if (!isMember && !(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+    if (!isMember && !(await isGroupVisibleToUser(c.env.DB, currentUser.user_id, groupId))) {
       return jsonResponse({ error: '权限不足' }, 403);
     }
   }
@@ -309,12 +302,44 @@ groups.delete('/:id', requireRole('super_admin'), async (c) => {
   return jsonResponse({ success: true });
 });
 
-// ========== 添加成员（仅超级管理员） ==========
-groups.post('/:id/members', requireRole('super_admin'), async (c) => {
+// ========== 可添加成员候选列表（超级管理员或项目组管理员） ==========
+groups.get('/:id/member-candidates', async (c) => {
+  const groupId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组 ID' }, 400);
+  const currentUser = c.get('user');
+
+  const isSuperAdmin = currentUser.role === 'super_admin';
+  if (!isSuperAdmin && !(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+    return jsonResponse({ error: '权限不足' }, 403);
+  }
+
+  const keyword = (c.req.query('search') || '').trim();
+  const like = `%${keyword}%`;
+
+  const rows = await c.env.DB.prepare(
+    `SELECT u.id, u.name, u.email FROM users u
+     WHERE u.status = 'active'
+       AND u.id NOT IN (SELECT user_id FROM user_group_relations WHERE group_id = ?)
+       AND (? = '' OR u.name LIKE ? OR u.email LIKE ?)
+     ORDER BY u.name ASC
+     LIMIT 50`
+  ).bind(groupId, keyword, like, like).all<{ id: number; name: string; email: string }>();
+
+  return jsonResponse({ users: rows.results });
+});
+
+// ========== 添加成员（超级管理员，或该项目组/其父组的管理员） ==========
+groups.post('/:id/members', async (c) => {
   const groupId = parseInt(c.req.param('id'));
   if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组 ID' }, 400);
   const currentUser = c.get('user');
   const body = await c.req.json<{ user_id: number; role?: 'admin' | 'member' }>();
+
+  const isSuperAdmin = currentUser.role === 'super_admin';
+  const isGroupAdmin = isSuperAdmin ? false : await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId);
+  if (!isSuperAdmin && !isGroupAdmin) {
+    return jsonResponse({ error: '权限不足，只有超级管理员或项目组管理员可以添加成员' }, 403);
+  }
 
   if (!body.user_id) {
     return jsonResponse({ error: '请指定用户' }, 400);
@@ -330,10 +355,13 @@ groups.post('/:id/members', requireRole('super_admin'), async (c) => {
     return jsonResponse({ error: '用户不存在' }, 404);
   }
 
+  // 项目组管理员只能添加普通成员，管理员身份需由超级管理员授予
+  const role = isSuperAdmin && body.role === 'admin' ? 'admin' : 'member';
+
   try {
     await c.env.DB.prepare(
       'INSERT INTO user_group_relations (user_id, group_id, role) VALUES (?, ?, ?)'
-    ).bind(body.user_id, groupId, body.role === 'admin' ? 'admin' : 'member').run();
+    ).bind(body.user_id, groupId, role).run();
   } catch {
     return jsonResponse({ error: '用户已在项目组中' }, 400);
   }

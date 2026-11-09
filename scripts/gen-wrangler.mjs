@@ -27,6 +27,7 @@ const fields = [
   { key: 'SMTP_USER', env: 'SMTP_USER', required: false, label: 'SMTP 账号' },
   { key: 'SMTP_FROM', env: 'SMTP_FROM', required: false, label: '发件人地址' },
   { key: 'PAGES_DOMAIN', env: 'PAGES_DOMAIN', required: false, label: '访问域名', defaultValue: '' },
+  { key: 'WORKER_HOST', env: 'WORKER_HOST', required: false, label: 'Worker 域名', defaultValue: '' },
 ]
 
 const overrides = new Map()

@@ -4,10 +4,14 @@ import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse, generateShortCode, hashPassword, validateAlias } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
+import { invalidateLinkCache } from '../cache';
 import {
   getManagedGroupIds,
+  getVisibleGroupIds,
+  expandGroupIdsWithDescendants,
   isGroupMember,
   isGroupAdminOf,
+  isGroupVisibleToUser,
   resolveReviewGroupId,
   getGroupReviewerEmails,
   getSuperAdminEmails,
@@ -23,6 +27,8 @@ links.get('/', authMiddleware, async (c) => {
   const search = c.req.query('search') || '';
   const status = c.req.query('status') || '';
   const groupId = c.req.query('groupId');
+  const domainId = c.req.query('domainId');
+  const creatorId = c.req.query('creatorId');
   const offset = (page - 1) * pageSize;
 
   let query = `
@@ -37,18 +43,20 @@ links.get('/', authMiddleware, async (c) => {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
+  // 记录当前用户可见的项目组（含子组），用于列表过滤
+  let visibleGroupIds: number[] = [];
+
   const isSuperAdmin = currentUser.role === 'super_admin';
   let managedIds: number[] = [];
   if (!isSuperAdmin) {
-    // 普通用户 / 项目组管理员：自己创建的 + 所属项目组（含管理组及其子组）的
+    // 普通用户 / 项目组管理员：自己创建的 + 可见项目组（所在组及子组、管理组及子组）的
     managedIds = await expandManagedGroupIds(c.env.DB, currentUser.user_id);
-    const groupPlaceholders = managedIds.length > 0 ? managedIds.map(() => '?').join(',') : 'NULL';
-    conditions.push(`(
-      sl.created_by = ?
-      OR sl.group_id IN (SELECT group_id FROM user_group_relations WHERE user_id = ?)
-      ${managedIds.length > 0 ? `OR sl.group_id IN (${groupPlaceholders})` : ''}
-    )`);
-    params.push(currentUser.user_id, currentUser.user_id, ...managedIds);
+    visibleGroupIds = await getVisibleGroupIds(c.env.DB, currentUser.user_id);
+    const groupPlaceholders = visibleGroupIds.length > 0
+      ? ` OR sl.group_id IN (${visibleGroupIds.map(() => '?').join(',')})`
+      : '';
+    conditions.push(`(sl.created_by = ?${groupPlaceholders})`);
+    params.push(currentUser.user_id, ...visibleGroupIds);
   }
   // super_admin 无额外条件
 
@@ -65,6 +73,16 @@ links.get('/', authMiddleware, async (c) => {
   if (groupId) {
     conditions.push('sl.group_id = ?');
     params.push(parseInt(groupId));
+  }
+
+  if (domainId) {
+    conditions.push('sl.domain_id = ?');
+    params.push(parseInt(domainId));
+  }
+
+  if (creatorId) {
+    conditions.push('sl.created_by = ?');
+    params.push(parseInt(creatorId));
   }
 
   // 自动标记过期
@@ -93,6 +111,64 @@ links.get('/', authMiddleware, async (c) => {
     total: countResult?.total || 0,
     page,
     pageSize,
+  });
+});
+
+// ========== 列表筛选项（按当前用户权限范围返回） ==========
+links.get('/filter-options', authMiddleware, async (c) => {
+  const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+
+  const visibleGroupIds = isSuperAdmin ? [] : await getVisibleGroupIds(c.env.DB, currentUser.user_id);
+  const groupPlaceholders = visibleGroupIds.map(() => '?').join(',');
+
+  // 项目组
+  const groups = isSuperAdmin
+    ? await c.env.DB.prepare('SELECT id, name, parent_id FROM project_groups ORDER BY COALESCE(parent_id, 0), name')
+        .all<{ id: number; name: string; parent_id: number | null }>()
+    : visibleGroupIds.length > 0
+      ? await c.env.DB.prepare(
+          `SELECT id, name, parent_id FROM project_groups WHERE id IN (${groupPlaceholders})
+           ORDER BY COALESCE(parent_id, 0), name`
+        ).bind(...visibleGroupIds).all<{ id: number; name: string; parent_id: number | null }>()
+      : { results: [] as { id: number; name: string; parent_id: number | null }[] };
+
+  // 域名：超管看全部可用短链域名，普通用户只看所在组绑定的域名
+  const domains = isSuperAdmin
+    ? await c.env.DB.prepare(
+        `SELECT DISTINCT d.id, d.domain FROM domains d
+         WHERE d.type IN ('short_link', 'both') AND d.status = 'active'
+         ORDER BY d.domain`
+      ).all<{ id: number; domain: string }>()
+    : visibleGroupIds.length > 0
+      ? await c.env.DB.prepare(
+          `SELECT DISTINCT d.id, d.domain FROM domains d
+           JOIN group_domain_relations gdr ON gdr.domain_id = d.id
+           WHERE gdr.group_id IN (${groupPlaceholders})
+             AND d.type IN ('short_link', 'both') AND d.status = 'active'
+           ORDER BY d.domain`
+        ).bind(...visibleGroupIds).all<{ id: number; domain: string }>()
+      : { results: [] as { id: number; domain: string }[] };
+
+  // 创建人：仅统计当前用户可见范围内的短链创建者
+  const creators = isSuperAdmin
+    ? await c.env.DB.prepare(
+        `SELECT DISTINCT u.id, u.name, u.email FROM short_links sl
+         JOIN users u ON u.id = sl.created_by
+         ORDER BY u.name LIMIT 500`
+      ).all<{ id: number; name: string; email: string }>()
+    : await c.env.DB.prepare(
+        `SELECT DISTINCT u.id, u.name, u.email FROM short_links sl
+         JOIN users u ON u.id = sl.created_by
+         WHERE sl.created_by = ?
+           ${visibleGroupIds.length > 0 ? `OR sl.group_id IN (${groupPlaceholders})` : ''}
+         ORDER BY u.name LIMIT 500`
+      ).bind(currentUser.user_id, ...visibleGroupIds).all<{ id: number; name: string; email: string }>();
+
+  return jsonResponse({
+    groups: groups.results,
+    domains: domains.results,
+    creators: creators.results,
   });
 });
 
@@ -167,6 +243,9 @@ links.post('/:id/review', authMiddleware, async (c) => {
 
   await logAudit(c.env.DB, c.env.KV, currentUser.user_id, approved ? 'approve_link' : 'reject_link', c.req.raw, 'link', linkId, JSON.stringify({ note }));
 
+  // 审核结果立即生效，清除跳转缓存
+  c.executionCtx.waitUntil(invalidateLinkCache(c.env, link.short_code));
+
   // 邮件通知创建者
   const creator = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
     .bind(link.created_by)
@@ -238,20 +317,40 @@ links.post('/', authMiddleware, async (c) => {
       body.domain_id = available.results[0].id;
     }
   } else if (body.domain_id) {
-    // 未选择项目组：使用平台上可用的短链域名
+    // 未选择项目组：域名必须可用；普通用户只能使用自己所在项目组绑定的域名
     const domain = await c.env.DB.prepare(
       "SELECT id FROM domains WHERE id = ? AND type IN ('short_link', 'both') AND status = 'active'"
     ).bind(body.domain_id).first();
     if (!domain) {
       return jsonResponse({ error: '域名不可用' }, 400);
     }
-  } else {
-    // 使用默认域名
+    if (currentUser.role !== 'super_admin') {
+      const allowedIds = await getAccessibleDomainIds(c.env.DB, currentUser.user_id);
+      if (!allowedIds.includes(body.domain_id)) {
+        return jsonResponse({ error: '无权使用该域名' }, 403);
+      }
+    }
+  } else if (currentUser.role === 'super_admin') {
+    // 超级管理员未指定域名：使用平台默认短链域名（未设置则留空）
     const defaultDomain = await c.env.DB.prepare(
       "SELECT id FROM domains WHERE is_default_short_link = 1 AND type IN ('short_link', 'both') AND status = 'active' LIMIT 1"
     ).first<{ id: number }>();
     if (defaultDomain) {
       body.domain_id = defaultDomain.id;
+    }
+  } else {
+    // 普通用户未指定域名：仅在其所在项目组的域名中取默认域名（未设置则留空）
+    const allowedIds = await getAccessibleDomainIds(c.env.DB, currentUser.user_id);
+    if (allowedIds.length > 0) {
+      const defaultDomain = await c.env.DB.prepare(
+        `SELECT id FROM domains
+         WHERE id IN (${allowedIds.map(() => '?').join(',')})
+           AND is_default_short_link = 1 AND type IN ('short_link', 'both') AND status = 'active'
+         LIMIT 1`
+      ).bind(...allowedIds).first<{ id: number }>();
+      if (defaultDomain) {
+        body.domain_id = defaultDomain.id;
+      }
     }
   }
 
@@ -266,13 +365,17 @@ links.post('/', authMiddleware, async (c) => {
   }
   let shortCode = aliasInput || generateShortCode(6);
 
-  // 检查短码冲突
+  // 检查短码冲突（同一域名内唯一；不同域名互不影响）
   let attempts = 0;
   while (attempts < 10) {
-    const existing = await c.env.DB.prepare('SELECT id FROM short_links WHERE short_code = ?').bind(shortCode).first();
+    const existing = await findAliasConflict(c.env.DB, shortCode, body.domain_id ?? null);
     if (!existing) break;
     if (body.custom_alias) {
-      return jsonResponse({ error: '该自定义别名已被使用' }, 400);
+      const domainName = body.domain_id ? await getDomainName(c.env.DB, body.domain_id) : '';
+      return jsonResponse(
+        { error: domainName ? `该别名已被域名 ${domainName} 下的短链使用` : '该自定义别名已被使用' },
+        400
+      );
     }
     shortCode = generateShortCode(6);
     attempts++;
@@ -393,11 +496,20 @@ links.put('/:id', authMiddleware, async (c) => {
     password?: string;
     expires_at?: number;
     redirect_type?: number;
-    group_id?: number;
+    group_id?: number | null;
+    domain_id?: number | null;
     short_code?: string;
   }>();
 
-  const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{ id: number; created_by: number; group_id: number | null; domain_id: number | null; short_code: string }>();
+  const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{
+    id: number;
+    created_by: number;
+    group_id: number | null;
+    domain_id: number | null;
+    short_code: string;
+    review_status: string;
+    review_group_id: number | null;
+  }>();
   if (!link) {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
@@ -432,10 +544,39 @@ links.put('/:id', authMiddleware, async (c) => {
     }
   }
 
+  // 目标项目组与目标域名（用于别名唯一性与域名权限校验）
+  const targetGroupId = body.group_id !== undefined ? body.group_id || null : link.group_id;
+  const targetDomainId = body.domain_id !== undefined ? body.domain_id ?? null : (domainOverride ?? link.domain_id);
+
+  // 修改域名：必须可用，且只允许选择有权限的域名
+  if (body.domain_id !== undefined && body.domain_id !== null) {
+    const domain = await c.env.DB.prepare(
+      "SELECT id FROM domains WHERE id = ? AND type IN ('short_link', 'both') AND status = 'active'"
+    ).bind(body.domain_id).first();
+    if (!domain) {
+      return jsonResponse({ error: '域名不可用' }, 400);
+    }
+    if (currentUser.role !== 'super_admin') {
+      if (targetGroupId) {
+        const bound = await c.env.DB.prepare(
+          'SELECT id FROM group_domain_relations WHERE group_id = ? AND domain_id = ?'
+        ).bind(targetGroupId, body.domain_id).first();
+        if (!bound) {
+          return jsonResponse({ error: '该项目组未绑定该域名' }, 403);
+        }
+      } else {
+        const allowedIds = await getAccessibleDomainIds(c.env.DB, currentUser.user_id);
+        if (!allowedIds.includes(body.domain_id)) {
+          return jsonResponse({ error: '无权使用该域名' }, 403);
+        }
+      }
+    }
+  }
+
   const updates: string[] = [];
   const params: (string | number | null)[] = [];
 
-  // 修改别名（短码）：格式校验 + 全局唯一性检查
+  // 修改别名（短码）：格式校验 + 同一域名内唯一性检查
   if (body.short_code !== undefined) {
     const alias = body.short_code.trim();
     if (!alias) {
@@ -445,12 +586,17 @@ links.put('/:id', authMiddleware, async (c) => {
     if (aliasError) {
       return jsonResponse({ error: aliasError }, 400);
     }
-    if (alias !== link.short_code) {
-      const conflict = await c.env.DB.prepare('SELECT id FROM short_links WHERE short_code = ? AND id != ?')
-        .bind(alias, linkId).first();
+    if (alias !== link.short_code || targetDomainId !== link.domain_id) {
+      const conflict = await findAliasConflict(c.env.DB, alias, targetDomainId, linkId);
       if (conflict) {
-        return jsonResponse({ error: '该自定义别名已被使用' }, 400);
+        const domainName = targetDomainId ? await getDomainName(c.env.DB, targetDomainId) : '';
+        return jsonResponse(
+          { error: domainName ? `该别名已被域名 ${domainName} 下的短链使用` : '该自定义别名已被使用' },
+          400
+        );
       }
+    }
+    if (alias !== link.short_code) {
       updates.push('short_code = ?'); params.push(alias);
       updates.push('custom_alias = ?'); params.push(alias);
     }
@@ -467,10 +613,14 @@ links.put('/:id', authMiddleware, async (c) => {
   if (body.group_id !== undefined) {
     updates.push('group_id = ?');
     params.push(body.group_id || null);
-    if (domainOverride !== null) {
-      updates.push('domain_id = ?');
-      params.push(domainOverride);
-    }
+  }
+  // 域名：显式指定优先，其次跟随项目组自动切换
+  if (body.domain_id !== undefined) {
+    updates.push('domain_id = ?');
+    params.push(body.domain_id ?? null);
+  } else if (domainOverride !== null) {
+    updates.push('domain_id = ?');
+    params.push(domainOverride);
   }
   if (body.password !== undefined) {
     if (body.password) {
@@ -485,14 +635,79 @@ links.put('/:id', authMiddleware, async (c) => {
     return jsonResponse({ error: '没有需要更新的字段' }, 400);
   }
 
+  // 被驳回的短链：用户修改后自动重新提交审核
+  let resubmitReviewGroupId: number | null = null;
+  const resubmit = link.review_status === 'rejected';
+  if (resubmit) {
+    const owner = await c.env.DB.prepare('SELECT review_by FROM users WHERE id = ?')
+      .bind(link.created_by)
+      .first<{ review_by: string }>();
+    resubmitReviewGroupId = owner?.review_by === 'super_admin'
+      ? null
+      : await resolveReviewGroupId(c.env.DB, targetGroupId);
+    updates.push("review_status = 'pending'", 'review_note = NULL', 'reviewed_by = NULL', 'reviewed_at = NULL');
+    updates.push('review_group_id = ?');
+    params.push(resubmitReviewGroupId);
+  }
+
   updates.push('updated_at = ?');
   params.push(Math.floor(Date.now() / 1000), linkId);
 
   await c.env.DB.prepare(`UPDATE short_links SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'update_link', c.req.raw, 'link', linkId, JSON.stringify(body));
+  await logAudit(
+    c.env.DB,
+    c.env.KV,
+    currentUser.user_id,
+    resubmit ? 'resubmit_link' : 'update_link',
+    c.req.raw,
+    'link',
+    linkId,
+    JSON.stringify(body)
+  );
 
-  return jsonResponse({ success: true });
+  // 重新提交审核时再次通知审核人
+  if (resubmit) {
+    const recipients = resubmitReviewGroupId
+      ? await getGroupReviewerEmails(c.env.DB, resubmitReviewGroupId)
+      : await getSuperAdminEmails(c.env.DB);
+
+    if (recipients.length > 0) {
+      const detail = await c.env.DB.prepare(
+        'SELECT name, short_code, target_url FROM short_links WHERE id = ?'
+      ).bind(linkId).first<{ name: string; short_code: string; target_url: string }>();
+
+      const applicant = await c.env.DB.prepare('SELECT name, email FROM users WHERE id = ?')
+        .bind(link.created_by)
+        .first<{ name: string; email: string }>();
+
+      if (detail && applicant) {
+        const { sendReviewRequestEmail } = await import('../services/email');
+        c.executionCtx.waitUntil(
+          Promise.all(
+            recipients.map((email) =>
+              sendReviewRequestEmail(
+                email,
+                {
+                  applicantName: applicant.name,
+                  applicantEmail: applicant.email,
+                  linkName: detail.name || '',
+                  shortCode: detail.short_code,
+                  targetUrl: detail.target_url,
+                },
+                c.env
+              )
+            )
+          )
+        );
+      }
+    }
+  }
+
+  // 短码或配置变更后立即失效跳转缓存（新旧短码都清）
+  c.executionCtx.waitUntil(invalidateLinkCache(c.env, link.short_code, body.short_code));
+
+  return jsonResponse({ success: true, review_status: resubmit ? 'pending' : link.review_status });
 });
 
 // ========== 删除短链 ==========
@@ -500,7 +715,7 @@ links.delete('/:id', authMiddleware, async (c) => {
   const linkId = parseInt(c.req.param('id'));
   const currentUser = c.get('user');
 
-  const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{ id: number; created_by: number; group_id: number | null }>();
+  const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{ id: number; created_by: number; group_id: number | null; short_code: string }>();
   if (!link) {
     return jsonResponse({ error: '短链不存在' }, 404);
   }
@@ -510,6 +725,9 @@ links.delete('/:id', authMiddleware, async (c) => {
   }
 
   await c.env.DB.prepare('DELETE FROM short_links WHERE id = ?').bind(linkId).run();
+
+  // 删除后立即释放别名缓存
+  c.executionCtx.waitUntil(invalidateLinkCache(c.env, link.short_code));
 
   await logAudit(c.env.DB, c.env.KV, currentUser.user_id, 'delete_link', c.req.raw, 'link', linkId);
 
@@ -564,7 +782,7 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
     }
 
     let shortCode = aliasInput || generateShortCode(6);
-    const existing = await c.env.DB.prepare('SELECT id FROM short_links WHERE short_code = ?').bind(shortCode).first();
+    const existing = await findAliasConflict(c.env.DB, shortCode, defaultDomain?.id || null);
     if (existing) {
       if (aliasInput) {
         results.push({ success: false, error: '别名已存在', target_url: item.target_url });
@@ -590,23 +808,52 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
 async function expandManagedGroupIds(db: D1Database, userId: number): Promise<number[]> {
   const managed = await getManagedGroupIds(db, userId);
   if (managed.length === 0) return [];
-
-  const all = await db.prepare('SELECT id, parent_id FROM project_groups').all<{ id: number; parent_id: number | null }>();
-  const result = new Set<number>(managed);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const g of all.results) {
-      if (g.parent_id && result.has(g.parent_id) && !result.has(g.id)) {
-        result.add(g.id);
-        changed = true;
-      }
-    }
-  }
-  return [...result];
+  return expandGroupIdsWithDescendants(db, managed);
 }
 
-// 检查用户是否有权查看短链（创建者 / 项目组成员 / 项目组管理员 / 超级管理员）
+// 别名冲突检测：同一域名内唯一（domain_id 为空视为同一「无域名」分组）
+async function findAliasConflict(
+  db: D1Database,
+  shortCode: string,
+  domainId: number | null,
+  excludeId?: number
+): Promise<{ id: number } | null> {
+  const row = await db
+    .prepare(
+      `SELECT id FROM short_links
+       WHERE short_code = ? AND COALESCE(domain_id, 0) = COALESCE(?, 0)
+       ${excludeId ? 'AND id != ?' : ''}
+       LIMIT 1`
+    )
+    .bind(...(excludeId ? [shortCode, domainId, excludeId] : [shortCode, domainId]))
+    .first<{ id: number }>();
+  return row || null;
+}
+
+async function getDomainName(db: D1Database, domainId: number): Promise<string> {
+  const row = await db.prepare('SELECT domain FROM domains WHERE id = ?').bind(domainId).first<{ domain: string }>();
+  return row?.domain || '';
+}
+
+/** 普通用户可使用的域名：所在项目组（含子组）绑定的、可用的短链域名 */
+async function getAccessibleDomainIds(db: D1Database, userId: number): Promise<number[]> {
+  const groupIds = await getVisibleGroupIds(db, userId);
+  if (groupIds.length === 0) return [];
+
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT d.id FROM domains d
+       JOIN group_domain_relations gdr ON gdr.domain_id = d.id
+       WHERE gdr.group_id IN (${groupIds.map(() => '?').join(',')})
+         AND d.type IN ('short_link', 'both') AND d.status = 'active'`
+    )
+    .bind(...groupIds)
+    .all<{ id: number }>();
+
+  return rows.results.map((r) => r.id);
+}
+
+// 检查用户是否有权查看短链（创建者 / 所在项目组及父组成员 / 项目组管理员 / 超级管理员）
 async function canAccessLink(db: D1Database, user: JWTPayload, link: { created_by: number; group_id: number | null }): Promise<boolean> {
   if (user.role === 'super_admin') return true;
   if (link.created_by === user.user_id) return true;
@@ -614,6 +861,7 @@ async function canAccessLink(db: D1Database, user: JWTPayload, link: { created_b
   if (link.group_id) {
     if (await isGroupMember(db, user.user_id, link.group_id)) return true;
     if (await isGroupAdminOf(db, user.user_id, link.group_id)) return true;
+    if (await isGroupVisibleToUser(db, user.user_id, link.group_id)) return true;
   }
 
   return false;

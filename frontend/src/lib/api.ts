@@ -175,6 +175,10 @@ export const groupsApi = {
   update: (id: number, payload: { name?: string; description?: string }) =>
     put<{ success: boolean }>(`/api/groups/${id}`, payload),
   remove: (id: number) => del<{ success: boolean }>(`/api/groups/${id}`),
+  memberCandidates: (id: number, search?: string) =>
+    get<{ users: { id: number; name: string; email: string }[] }>(
+      `/api/groups/${id}/member-candidates${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ),
   addMember: (id: number, payload: { user_id: number; role?: 'admin' | 'member' }) =>
     post<{ success: boolean }>(`/api/groups/${id}/members`, payload),
   removeMember: (id: number, userId: number) =>
@@ -188,8 +192,10 @@ export const groupsApi = {
 // ============ 域名管理 ============
 export const domainsApi = {
   list: () => get<{ domains: Domain[] }>('/api/domains'),
-  shortLinkDomains: () =>
-    get<{ domains: { id: number; domain: string; is_default_short_link: number }[] }>('/api/domains/short-link-domains'),
+  shortLinkDomains: (groupId?: number) =>
+    get<{ domains: { id: number; domain: string; is_default_short_link: number }[] }>(
+      `/api/domains/short-link-domains${groupId ? `?groupId=${groupId}` : ''}`,
+    ),
   create: (payload: { domain: string; type: 'short_link' | 'admin' | 'both'; is_default_short_link?: boolean }) =>
     post<{
       success: boolean
@@ -213,7 +219,15 @@ export const domainsApi = {
 // ============ 短链 ============
 export const linksApi = {
   list: (
-    params: { page?: number; pageSize?: number; search?: string; status?: string; groupId?: number } = {},
+    params: {
+      page?: number
+      pageSize?: number
+      search?: string
+      status?: string
+      groupId?: number
+      domainId?: number
+      creatorId?: number
+    } = {},
   ) => {
     const q = new URLSearchParams()
     if (params.page) q.set('page', String(params.page))
@@ -221,8 +235,16 @@ export const linksApi = {
     if (params.search) q.set('search', params.search)
     if (params.status) q.set('status', params.status)
     if (params.groupId) q.set('groupId', String(params.groupId))
+    if (params.domainId) q.set('domainId', String(params.domainId))
+    if (params.creatorId) q.set('creatorId', String(params.creatorId))
     return get<{ links: ShortLink[]; total: number; page: number; pageSize: number }>(`/api/links?${q}`)
   },
+  filterOptions: () =>
+    get<{
+      groups: { id: number; name: string; parent_id: number | null }[]
+      domains: { id: number; domain: string }[]
+      creators: { id: number; name: string; email: string }[]
+    }>('/api/links/filter-options'),
   detail: (id: number) => get<{ link: ShortLink }>(`/api/links/${id}`),
   create: (payload: {
     target_url: string
@@ -251,9 +273,10 @@ export const linksApi = {
       expires_at?: number | null
       redirect_type?: number
       group_id?: number | null
+      domain_id?: number | null
       short_code?: string
     },
-  ) => put<{ success: boolean }>(`/api/links/${id}`, payload),
+  ) => put<{ success: boolean; review_status?: string }>(`/api/links/${id}`, payload),
   remove: (id: number) => del<{ success: boolean }>(`/api/links/${id}`),
   toggleDisplay: (id: number, displayed: boolean, order?: number) =>
     post<{ success: boolean }>(`/api/links/${id}/display`, { displayed, order }),
