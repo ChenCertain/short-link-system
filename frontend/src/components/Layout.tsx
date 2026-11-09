@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
   FolderTree,
@@ -8,11 +8,9 @@ import {
   Link2,
   LogOut,
   Menu,
-  Moon,
   ScrollText,
   Settings,
   ShieldCheck,
-  Sun,
   UserRound,
   Users,
   UsersRound,
@@ -21,7 +19,6 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { LogoMark } from '@/components/Logo'
 import { cn, ROLE_LABELS } from '@/lib/utils'
-import { useTheme } from '@/lib/theme'
 
 interface NavItem {
   to: string
@@ -55,8 +52,14 @@ const navItems: NavItem[] = [
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const { isDark: dark, toggle: toggleTheme, choice: themeChoice } = useTheme()
+  const location = useLocation()
+  const scrollRef = useRef<HTMLDivElement>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // 左侧导航固定、仅右侧内容区滚动，切换页面时需要把内容区滚回顶部
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 })
+  }, [location.pathname])
 
   const isSuperAdmin = user?.role === 'super_admin'
   const isGroupAdmin = !!user?.managed_group_ids?.length
@@ -87,7 +90,7 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="flex h-dvh overflow-hidden bg-gray-50 dark:bg-gray-950">
       {/* 移动端遮罩 */}
       {mobileOpen && (
         <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setMobileOpen(false)} />
@@ -148,32 +151,18 @@ export default function Layout() {
               {roleLabel} · {user?.email}
             </p>
           </Link>
-          <div className="flex gap-2">
-            <button
-              onClick={toggleTheme}
-              title={
-                themeChoice === 'system'
-                  ? '当前跟随系统，点击可固定为浅色 / 深色'
-                  : '切换浅色 / 深色'
-              }
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-            >
-              {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-              {dark ? '浅色' : '深色'}
-            </button>
-            <button
-              onClick={handleLogout}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:border-gray-700 dark:hover:bg-red-900/20"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              退出
-            </button>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:border-gray-700 dark:hover:bg-red-900/20"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            退出登录
+          </button>
         </div>
       </aside>
 
-      {/* 主内容 */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* 主内容：独立滚动容器，左侧导航固定不动 */}
+      <div ref={scrollRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
         <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-gray-200 bg-white/80 px-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/80 lg:px-6">
           <button
             className="rounded-md p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 lg:hidden"
