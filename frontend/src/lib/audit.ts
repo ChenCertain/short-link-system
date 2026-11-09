@@ -24,6 +24,7 @@ export const ACTION_LABELS: Record<string, string> = {
   update_group: '更新项目组',
   delete_group: '删除项目组',
   add_group_member: '添加组成员',
+  update_member_review: '调整成员审核方式',
   remove_group_member: '移除组成员',
   update_group_member_role: '调整组成员身份',
   update_group_member_permissions: '配置组成员权限',
@@ -66,6 +67,7 @@ const DETAIL_KEY_LABELS: Record<string, string> = {
   review_group_id: '审核项目组',
   review_by: '审核方式',
   require_review: '需要审核',
+  group_role: '组内身份',
   note: '备注',
   count: '数量',
   method: '验证方式',
@@ -119,7 +121,11 @@ function formatValue(key: string, value: unknown): string {
   if (key === 'role') return ROLE_VALUES[text] || text
   if (key === 'status') return STATUS_VALUES[text] || text
   if (key === 'review_status') return REVIEW_VALUES[text] || text
-  if (key === 'review_by') return text === 'super_admin' ? '超级管理员' : '自动'
+  if (key === 'review_by') {
+    if (text === 'super_admin') return '超级管理员'
+    if (text === 'parent') return '父组管理员'
+    return '组内管理员（逐级向上）'
+  }
   return text
 }
 

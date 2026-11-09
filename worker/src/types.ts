@@ -23,7 +23,7 @@ export interface Env {
 export type UserRole = 'super_admin' | 'user';
 export type UserStatus = 'active' | 'disabled';
 // 审核方式：auto = 组管理员优先；super_admin = 始终由超级管理员审核
-export type ReviewBy = 'auto' | 'super_admin';
+export type ReviewBy = 'auto' | 'parent' | 'super_admin';
 
 export interface User {
   id: number;

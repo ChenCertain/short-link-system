@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ExternalLink, Link2, Pencil, Search, ShieldCheck, Trash2, UserMinus, UserPlus } from 'lucide-react'
+import {
+  ExternalLink,
+  FileCheck2,
+  Link2,
+  Pencil,
+  Search,
+  ShieldCheck,
+  Trash2,
+  UserMinus,
+  UserPlus,
+  UserRoundPlus,
+} from 'lucide-react'
 import { groupsApi, linksApi, membersApi } from '@/lib/api'
 import type { ScopedMember, ScopedMemberGroup } from '@/lib/api'
 import {
@@ -65,6 +76,62 @@ export default function Members() {
   const [deletingLink, setDeletingLink] = useState<ShortLink | null>(null)
   const [linkDeleteLoading, setLinkDeleteLoading] = useState(false)
   const memberLinkPageSize = 10
+
+  // 创建用户（仅管理范围内）
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createForm, setCreateForm] = useState<{
+    name: string
+    email: string
+    password: string
+    group_id: number
+    group_role: 'admin' | 'member'
+    require_review: boolean
+    review_by: 'auto' | 'parent' | 'super_admin'
+  }>({
+    name: '',
+    email: '',
+    password: '',
+    group_id: 0,
+    group_role: 'member',
+    require_review: true,
+    review_by: 'auto',
+  })
+  const [createLoading, setCreateLoading] = useState(false)
+  const [createError, setCreateError] = useState('')
+
+  // 审核方式配置弹窗
+  const [reviewMember, setReviewMember] = useState<ScopedMember | null>(null)
+  const [reviewForm, setReviewForm] = useState<{
+    require_review: boolean
+    review_by: 'auto' | 'parent' | 'super_admin'
+  }>({
+    require_review: true,
+    review_by: 'auto',
+  })
+  const [reviewSaving, setReviewSaving] = useState(false)
+
+  /** 可创建用户的目标组（树形拍平，仅含自己有创建权限的组） */
+  const createGroupOptions = useMemo(() => {
+    const result: { id: number; label: string; is_direct: boolean }[] = []
+    const walk = (group: ScopedMemberGroup, depth: number) => {
+      if (group.can_create_user) {
+        result.push({
+          id: group.id,
+          label: `${'　'.repeat(depth)}${depth > 0 ? '└ ' : ''}${group.path}`,
+          is_direct: group.is_direct,
+        })
+      }
+      for (const child of groups.filter((item) => item.parent_id === group.id)) walk(child, depth + 1)
+    }
+    const roots = groups.filter((group) => !groups.some((item) => item.id === group.parent_id))
+    roots.forEach((root) => walk(root, 0))
+    return result
+  }, [groups])
+
+  const createTargetIsDirect = useMemo(
+    () => createGroupOptions.find((option) => option.id === createForm.group_id)?.is_direct ?? true,
+    [createGroupOptions, createForm.group_id],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -148,6 +215,79 @@ export default function Members() {
       setAddError((err as Error).message)
     } finally {
       setAdding(false)
+    }
+  }
+
+  const openCreate = () => {
+    const first = createGroupOptions[0]
+    setCreateError('')
+    setCreateForm({
+      name: '',
+      email: '',
+      password: '',
+      group_id: first?.id ?? 0,
+      group_role: 'member',
+      require_review: true,
+      review_by: 'auto',
+    })
+    setCreateOpen(true)
+  }
+
+  const handleCreateUser = async () => {
+    if (!createForm.name.trim() || !createForm.email.trim()) {
+      setCreateError('请填写姓名和邮箱')
+      return
+    }
+    if (!createForm.group_id) {
+      setCreateError('请选择目标项目组')
+      return
+    }
+    if (createForm.password && createForm.password.length < 8) {
+      setCreateError('密码长度至少 8 位')
+      return
+    }
+    setCreateLoading(true)
+    setCreateError('')
+    try {
+      await membersApi.createUser({
+        name: createForm.name.trim(),
+        email: createForm.email.trim(),
+        password: createForm.password || undefined,
+        group_id: createForm.group_id,
+        group_role: createTargetIsDirect ? 'member' : createForm.group_role,
+        require_review: createForm.require_review,
+        review_by: createForm.review_by,
+      })
+      show('用户创建成功', 'success')
+      setCreateOpen(false)
+      void load()
+    } catch (err) {
+      setCreateError((err as Error).message)
+    } finally {
+      setCreateLoading(false)
+    }
+  }
+
+  const openReview = (member: ScopedMember) => {
+    setReviewForm({
+      require_review: member.require_review,
+      review_by: member.review_by || 'auto',
+    })
+    setReviewMember(member)
+  }
+
+  const saveReview = async () => {
+    if (!current || !reviewMember) return
+    setReviewSaving(true)
+    try {
+      await membersApi.updateMemberReview(current.id, reviewMember.id, reviewForm)
+      show('审核方式已保存', 'success')
+      setReviewMember(null)
+      void load()
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setReviewSaving(false)
     }
   }
 
@@ -304,6 +444,12 @@ export default function Members() {
                 onChange={(e) => setKeyword(e.target.value)}
               />
             </div>
+            {createGroupOptions.length > 0 && (
+              <Button size="sm" variant="outline" onClick={openCreate}>
+                <UserRoundPlus className="h-4 w-4" />
+                创建用户
+              </Button>
+            )}
             {current?.can_set_role && (
               <Button size="sm" onClick={openAdd}>
                 <UserPlus className="h-4 w-4" />
@@ -352,7 +498,20 @@ export default function Members() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={member.status === 'active' ? 'active' : 'disabled'} />
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StatusBadge status={member.status === 'active' ? 'active' : 'disabled'} />
+                          {member.require_review ? (
+                            <Badge tone="yellow">
+                              {member.review_by === 'parent'
+                                ? '父组审核'
+                                : member.review_by === 'super_admin'
+                                  ? '超管审核'
+                                  : '组内审核'}
+                            </Badge>
+                          ) : (
+                            <Badge tone="gray">免审核</Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
                         {enabledCount(member)} / {GROUP_PERMISSION_DEFS.length} 项
@@ -362,6 +521,18 @@ export default function Members() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openReview(member)}
+                            disabled={!member.can_config_review}
+                            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 disabled:opacity-30 dark:hover:bg-gray-800"
+                            title={
+                              member.can_config_review
+                                ? '设置短链审核方式（子组管理员 / 父组管理员 / 超管）'
+                                : '不能调整该成员的审核方式'
+                            }
+                          >
+                            <FileCheck2 className="h-4 w-4" />
+                          </button>
                           <button
                             onClick={() => openMemberLinks(member)}
                             className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
@@ -527,13 +698,198 @@ export default function Members() {
             <Label htmlFor="candidate-role">组内身份</Label>
             <Select
               id="candidate-role"
-              value={addRole}
+              value={current?.is_direct ? 'member' : addRole}
+              disabled={current?.is_direct}
               onChange={(e) => setAddRole(e.target.value as 'admin' | 'member')}
             >
               <option value="member">成员</option>
               <option value="admin">组管理员</option>
             </Select>
+            {current?.is_direct && (
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                同级组内只能添加普通成员，组管理员请在子组内设置
+              </p>
+            )}
           </div>
+        </div>
+      </Modal>
+
+      {/* 创建用户 */}
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="创建用户"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCreateUser} loading={createLoading}>
+              创建
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          {createError && <ErrorText>{createError}</ErrorText>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="c-name">姓名</Label>
+              <Input
+                id="c-name"
+                value={createForm.name}
+                onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                placeholder="用户姓名"
+              />
+            </div>
+            <div>
+              <Label htmlFor="c-email">邮箱</Label>
+              <Input
+                id="c-email"
+                type="email"
+                value={createForm.email}
+                onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+                placeholder="name@example.com"
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="c-password">初始密码（可选）</Label>
+            <Input
+              id="c-password"
+              type="password"
+              value={createForm.password}
+              onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+              placeholder="至少 8 位；留空则用户通过邮箱验证码自行设置"
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="c-group">目标项目组</Label>
+              <Select
+                id="c-group"
+                value={createForm.group_id}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, group_id: Number(e.target.value), group_role: 'member' })
+                }
+              >
+                {createGroupOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                同级组只能创建普通成员，组管理员请在子组内设置
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="c-group-role">组内身份</Label>
+              <Select
+                id="c-group-role"
+                value={createTargetIsDirect ? 'member' : createForm.group_role}
+                disabled={createTargetIsDirect}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, group_role: e.target.value as 'admin' | 'member' })
+                }
+              >
+                <option value="member">普通成员</option>
+                <option value="admin">组管理员（仅子组）</option>
+              </Select>
+            </div>
+          </div>
+          <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+              checked={createForm.require_review}
+              onChange={(e) => setCreateForm({ ...createForm, require_review: e.target.checked })}
+            />
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              该用户创建的短链需要审核（默认开启）
+              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                未配置审核人时，系统会从所属组向上寻找有审核权限的管理员，最终由超级管理员审核
+              </span>
+            </span>
+          </label>
+          {createForm.require_review && (
+            <div>
+              <Label htmlFor="c-review-by">审核方式</Label>
+              <Select
+                id="c-review-by"
+                value={createForm.review_by}
+                onChange={(e) =>
+                  setCreateForm({
+                    ...createForm,
+                    review_by: e.target.value as 'auto' | 'parent' | 'super_admin',
+                  })
+                }
+              >
+                <option value="auto">自动：子组管理员优先，无管理员则逐级向上</option>
+                <option value="parent">父组管理员：跳过本组，由上级管理员审核</option>
+                <option value="super_admin">超级管理员</option>
+              </Select>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* 审核方式配置 */}
+      <Modal
+        open={!!reviewMember}
+        onClose={() => setReviewMember(null)}
+        title={`审核方式 · ${reviewMember?.name || ''}`}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setReviewMember(null)}>
+              取消
+            </Button>
+            <Button onClick={saveReview} loading={reviewSaving}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            项目组：{current?.path} · 该配置对该用户创建的所有短链生效
+          </p>
+          <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+              checked={reviewForm.require_review}
+              onChange={(e) => setReviewForm({ ...reviewForm, require_review: e.target.checked })}
+            />
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              该用户创建的短链需要审核
+              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                关闭后该用户新建的短链直接生效，不再进入待审核
+              </span>
+            </span>
+          </label>
+          {reviewForm.require_review && (
+            <div>
+              <Label htmlFor="m-review-by">审核人</Label>
+              <Select
+                id="m-review-by"
+                value={reviewForm.review_by}
+                onChange={(e) =>
+                  setReviewForm({
+                    ...reviewForm,
+                    review_by: e.target.value as 'auto' | 'parent' | 'super_admin',
+                  })
+                }
+              >
+                <option value="auto">子组管理员：最近的有审核权限管理员</option>
+                <option value="parent">父组管理员：跳过本组，由上级管理员审核</option>
+                <option value="super_admin">超级管理员</option>
+              </Select>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                若配置范围内没有具备审核权限的管理员（例如子组暂无管理员），会自动继续向更上层寻找，最终由超级管理员兜底
+              </p>
+            </div>
+          )}
         </div>
       </Modal>
 

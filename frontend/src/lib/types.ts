@@ -1,7 +1,7 @@
 export type UserRole = 'super_admin' | 'user'
 export type UserStatus = 'active' | 'disabled'
 export type ReviewStatus = 'approved' | 'pending' | 'rejected'
-export type ReviewBy = 'auto' | 'super_admin'
+export type ReviewBy = 'auto' | 'parent' | 'super_admin'
 
 /** 权限键 → 是否开启 */
 export type PermissionMap = Record<string, boolean>

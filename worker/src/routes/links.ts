@@ -425,10 +425,14 @@ links.post('/', authMiddleware, async (c) => {
       .first<{ require_review: number; review_by: string }>();
     requireReview = !!owner?.require_review;
     if (requireReview) {
-      // 审核人：默认优先由所属项目组的管理员审核；无组或组内无管理员则由超级管理员审核
+      // 审核人：auto = 从所属组向上找最近有审核权限的管理员；parent = 从父组开始向上找；super_admin = 超管
       reviewGroupId = owner?.review_by === 'super_admin'
         ? null
-        : await resolveReviewGroupId(c.env.DB, body.group_id || null);
+        : await resolveReviewGroupId(
+            c.env.DB,
+            body.group_id || null,
+            owner?.review_by === 'parent' ? 'parent' : 'auto',
+          );
     }
   }
   const reviewStatus = requireReview ? 'pending' : 'approved';
@@ -675,7 +679,11 @@ links.put('/:id', authMiddleware, async (c) => {
       .first<{ review_by: string }>();
     resubmitReviewGroupId = owner?.review_by === 'super_admin'
       ? null
-      : await resolveReviewGroupId(c.env.DB, targetGroupId);
+      : await resolveReviewGroupId(
+          c.env.DB,
+          targetGroupId,
+          owner?.review_by === 'parent' ? 'parent' : 'auto',
+        );
     updates.push("review_status = 'pending'", 'review_note = NULL', 'reviewed_by = NULL', 'reviewed_at = NULL');
     updates.push('review_group_id = ?');
     params.push(resubmitReviewGroupId);

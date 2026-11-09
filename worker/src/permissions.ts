@@ -2,7 +2,7 @@
 // 说明：系统只有两种全局角色（super_admin / user），
 // 「项目组管理员」由 user_group_relations.role = 'admin' 表达，不再使用 project_admin 角色。
 
-export type ReviewBy = 'auto' | 'super_admin';
+export type ReviewBy = 'auto' | 'parent' | 'super_admin';
 
 /** 用户作为管理员管理的项目组 id 列表（不含父组继承） */
 export async function getManagedGroupIds(db: D1Database, userId: number): Promise<number[]> {
@@ -157,48 +157,54 @@ export async function isGroupVisibleToUser(db: D1Database, userId: number, group
   return false;
 }
 
+/** 组内是否存在「具备审核权限」的管理员（组管理员默认拥有 link.review，可被单独关闭） */
+async function groupHasReviewer(db: D1Database, groupId: number): Promise<boolean> {
+  const admins = await db
+    .prepare("SELECT user_id FROM user_group_relations WHERE group_id = ? AND role = 'admin'")
+    .bind(groupId)
+    .all<{ user_id: number }>();
+  for (const admin of admins.results) {
+    if (await hasGroupPermission(db, admin.user_id, groupId, 'link.review')) return true;
+  }
+  return false;
+}
+
 /**
  * 计算短链的审核归属项目组：
- * 从所属组向上找第一个「存在管理员」的组，作为由组管理员审核的依据；
+ * 按 review_by 模式从所属组（或父组）向上找第一个「存在有审核权限管理员」的组；
  * 找不到则返回 null，表示由超级管理员审核。
  */
-export async function resolveReviewGroupId(db: D1Database, groupId: number | null): Promise<number | null> {
+export async function resolveReviewGroupId(
+  db: D1Database,
+  groupId: number | null,
+  mode: 'auto' | 'parent' = 'auto',
+): Promise<number | null> {
   if (!groupId) return null;
-  let current: number | null = groupId;
+  let current: number | null = mode === 'parent' ? await getParentId(db, groupId) : groupId;
   for (let i = 0; i < 20 && current; i++) {
-    const admin = await db
-      .prepare("SELECT group_id FROM user_group_relations WHERE group_id = ? AND role = 'admin' LIMIT 1")
-      .bind(current)
-      .first();
-    if (admin) return current;
-    const group: { parent_id: number | null } | null = await db
-      .prepare('SELECT parent_id FROM project_groups WHERE id = ?')
-      .bind(current)
-      .first<{ parent_id: number | null }>();
-    current = group?.parent_id ?? null;
+    if (await groupHasReviewer(db, current)) return current;
+    current = await getParentId(db, current);
   }
   return null;
 }
 
-/** 收集某个项目组的审核人邮箱（该组管理员 + 其父组管理员），去重 */
+/** 收集某个项目组的审核人邮箱（该组及祖先组中「具备审核权限」的管理员），去重 */
 export async function getGroupReviewerEmails(db: D1Database, groupId: number): Promise<string[]> {
   const emails = new Set<string>();
   let current: number | null = groupId;
   for (let i = 0; i < 20 && current; i++) {
     const admins = await db
       .prepare(
-        `SELECT u.email FROM user_group_relations ugr
+        `SELECT u.id, u.email FROM user_group_relations ugr
          JOIN users u ON ugr.user_id = u.id
          WHERE ugr.group_id = ? AND ugr.role = 'admin' AND u.status = 'active'`
       )
       .bind(current)
-      .all<{ email: string }>();
-    for (const row of admins.results) emails.add(row.email);
-    const group: { parent_id: number | null } | null = await db
-      .prepare('SELECT parent_id FROM project_groups WHERE id = ?')
-      .bind(current)
-      .first<{ parent_id: number | null }>();
-    current = group?.parent_id ?? null;
+      .all<{ id: number; email: string }>();
+    for (const admin of admins.results) {
+      if (await hasGroupPermission(db, admin.id, current, 'link.review')) emails.add(admin.email);
+    }
+    current = await getParentId(db, current);
   }
   return [...emails];
 }
@@ -244,6 +250,7 @@ export const PERMISSION_DEFS: PermissionDef[] = [
   { key: 'group.member.remove', label: '移除成员', description: '将成员移出项目组', scope: 'group', category: '成员管理' },
   { key: 'group.member.role', label: '设置成员身份', description: '设置成员为组管理员（含子组管理员）', scope: 'group', category: '成员管理' },
   { key: 'group.member.permission', label: '配置成员权限', description: '为组内 / 子组成员单独开关权限', scope: 'group', category: '成员管理' },
+  { key: 'group.user.create', label: '创建用户', description: '在组内 / 子组内创建新用户', scope: 'group', category: '成员管理' },
   // ---- 全局 ----
   { key: 'user.manage', label: '用户管理', description: '查看用户列表、用户详情与操作记录，配置全局权限', scope: 'global', category: '全局管理' },
   { key: 'audit.view', label: '操作审计', description: '查看全站操作审计日志', scope: 'global', category: '全局管理' },

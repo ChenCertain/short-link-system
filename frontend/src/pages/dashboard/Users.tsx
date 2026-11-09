@@ -80,6 +80,9 @@ export default function Users() {
     role: UserRole
     require_review: boolean
     review_by: ReviewBy
+    /** 0 表示暂不加入项目组 */
+    group_id: number
+    group_role: 'admin' | 'member'
   }>({
     name: '',
     email: '',
@@ -88,6 +91,8 @@ export default function Users() {
     // 新建用户默认开启短链审核
     require_review: true,
     review_by: 'auto',
+    group_id: 0,
+    group_role: 'member',
   })
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
@@ -192,6 +197,8 @@ export default function Users() {
       role: 'user',
       require_review: true,
       review_by: 'auto',
+      group_id: 0,
+      group_role: 'member',
     })
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -214,6 +221,8 @@ export default function Users() {
         role: createForm.role,
         require_review: createForm.require_review,
         review_by: createForm.review_by,
+        group_id: createForm.role === 'super_admin' || !createForm.group_id ? null : createForm.group_id,
+        group_role: createForm.group_role,
       })
       show('用户创建成功', 'success')
       setCreateOpen(false)
@@ -551,7 +560,11 @@ export default function Users() {
                           {u.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
                           {!!u.require_review && (
                             <Badge tone="yellow">
-                              {u.review_by === 'super_admin' ? '超管审核' : '需审核'}
+                              {u.review_by === 'super_admin'
+                                ? '超管审核'
+                                : u.review_by === 'parent'
+                                  ? '父组审核'
+                                  : '组内审核'}
                             </Badge>
                           )}
                         </div>
@@ -700,10 +713,46 @@ export default function Users() {
               <option value="user">普通用户</option>
               <option value="super_admin">超级管理员</option>
             </Select>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              项目组管理员请在「项目组 → 成员」中设置
-            </p>
           </div>
+
+          {createForm.role === 'user' && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="u-group">所属项目组</Label>
+                <Select
+                  id="u-group"
+                  value={createForm.group_id}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, group_id: Number(e.target.value), group_role: 'member' })
+                  }
+                >
+                  <option value={0}>暂不加入项目组</option>
+                  {groupOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="u-group-role">组内身份</Label>
+                <Select
+                  id="u-group-role"
+                  value={createForm.group_role}
+                  disabled={!createForm.group_id}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, group_role: e.target.value as 'admin' | 'member' })
+                  }
+                >
+                  <option value="member">普通成员</option>
+                  <option value="admin">组管理员</option>
+                </Select>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">
+                创建后立即加入所选项目组；组内身份可随时在「成员管理」中调整
+              </p>
+            </div>
+          )}
 
           <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
             <input
@@ -728,7 +777,8 @@ export default function Users() {
                 value={createForm.review_by}
                 onChange={(e) => setCreateForm({ ...createForm, review_by: e.target.value as ReviewBy })}
               >
-                <option value="auto">自动（优先所在项目组管理员，无则超级管理员）</option>
+                <option value="auto">自动（子组管理员优先，无管理员则逐级向上）</option>
+                <option value="parent">父组管理员</option>
                 <option value="super_admin">仅超级管理员</option>
               </Select>
             </div>
@@ -825,7 +875,8 @@ export default function Users() {
                 value={editForm.review_by}
                 onChange={(e) => setEditForm({ ...editForm, review_by: e.target.value as ReviewBy })}
               >
-                <option value="auto">自动（优先所在项目组管理员，无则超级管理员）</option>
+                <option value="auto">自动（子组管理员优先，无管理员则逐级向上）</option>
+                <option value="parent">父组管理员</option>
                 <option value="super_admin">仅超级管理员</option>
               </Select>
             </div>
@@ -919,7 +970,11 @@ export default function Users() {
                       {detail.user.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
                       {!!detail.user.require_review && (
                         <Badge tone="yellow">
-                          {detail.user.review_by === 'super_admin' ? '超管审核' : '需审核'}
+                          {detail.user.review_by === 'super_admin'
+                            ? '超管审核'
+                            : detail.user.review_by === 'parent'
+                              ? '父组审核'
+                              : '组内审核'}
                         </Badge>
                       )}
                     </div>

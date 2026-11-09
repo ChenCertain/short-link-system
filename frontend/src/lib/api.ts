@@ -180,7 +180,10 @@ export const usersApi = {
     name: string
     role: 'super_admin' | 'user'
     require_review?: boolean
-    review_by?: 'auto' | 'super_admin'
+    review_by?: 'auto' | 'parent' | 'super_admin'
+    /** 可选：创建时直接加入某个项目组 */
+    group_id?: number | null
+    group_role?: 'admin' | 'member'
   }) => post<{ success: boolean; user: AuthUser }>('/api/users', payload),
   update: (
     id: number,
@@ -190,9 +193,9 @@ export const usersApi = {
       status?: 'active' | 'disabled'
       password?: string
       require_review?: boolean
-      review_by?: 'auto' | 'super_admin'
-    },
-  ) => put<{ success: boolean }>(`/api/users/${id}`, payload),
+      review_by?: 'auto' | 'parent' | 'super_admin'
+      },
+      ) => put<{ success: boolean }>(`/api/users/${id}`, payload),
   remove: (id: number) => del<{ success: boolean }>(`/api/users/${id}`),
 }
 
@@ -249,9 +252,14 @@ export interface ScopedMember {
   last_login_ip: string | null
   link_count: number
   is_self: boolean
+  /** 该用户创建的短链是否需要审核 */
+  require_review: boolean
+  /** 审核归属：auto=向上找管理员 / parent=父组管理员 / super_admin=超级管理员 */
+  review_by: 'auto' | 'parent' | 'super_admin'
   can_edit_permission: boolean
   can_edit_role: boolean
   can_remove: boolean
+  can_config_review: boolean
 }
 
 export interface ScopedMemberGroup {
@@ -260,14 +268,33 @@ export interface ScopedMemberGroup {
   parent_id: number | null
   path: string
   member_count: number
+  /** 是否为自己直接管理的组（同级组）；子组为 false */
+  is_direct: boolean
   can_config_permission: boolean
   can_set_role: boolean
   can_remove_member: boolean
+  can_create_user: boolean
   members: ScopedMember[]
 }
 
 export const membersApi = {
   scope: () => get<{ is_super_admin: boolean; groups: ScopedMemberGroup[] }>('/api/members/scope'),
+  /** 在管理范围内创建用户（同级组只能创建普通成员，子组可创建组管理员） */
+  createUser: (payload: {
+    name: string
+    email: string
+    password?: string
+    group_id: number
+    group_role?: 'admin' | 'member'
+    require_review?: boolean
+    review_by?: 'auto' | 'parent' | 'super_admin'
+  }) => post<{ success: boolean; user: { id: number } }>('/api/members/users', payload),
+  /** 设置成员的短链审核方式 */
+  updateMemberReview: (
+    groupId: number,
+    userId: number,
+    payload: { require_review?: boolean; review_by?: 'auto' | 'parent' | 'super_admin' },
+  ) => put<{ success: boolean }>(`/api/members/groups/${groupId}/members/${userId}/review`, payload),
 }
 
 // ============ 域名管理 ============

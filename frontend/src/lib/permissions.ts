@@ -29,6 +29,7 @@ export const PERMISSION_DEFS: PermissionDef[] = [
   { key: 'group.member.remove', label: '移除成员', description: '将成员移出项目组', scope: 'group', category: '成员管理' },
   { key: 'group.member.role', label: '设置成员身份', description: '设置成员为组管理员（含子组管理员）', scope: 'group', category: '成员管理' },
   { key: 'group.member.permission', label: '配置成员权限', description: '为组内 / 子组成员单独开关权限', scope: 'group', category: '成员管理' },
+  { key: 'group.user.create', label: '创建用户', description: '在组内 / 子组内创建新用户', scope: 'group', category: '成员管理' },
   // ---- 全局 ----
   { key: 'user.manage', label: '用户管理', description: '查看用户列表、用户详情与操作记录，配置全局权限', scope: 'global', category: '全局管理' },
   { key: 'audit.view', label: '操作审计', description: '查看全站操作审计日志', scope: 'global', category: '全局管理' },

@@ -10,6 +10,7 @@ import {
   GLOBAL_PERMISSION_KEYS,
   getGlobalPermissions,
   getManagedGroupIds,
+  resolveReviewGroupId,
   hasGlobalPermission,
   parsePermissionJson,
 } from '../permissions';
@@ -174,7 +175,9 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
     name: string;
     role: 'super_admin' | 'user';
     require_review?: boolean;
-    review_by?: 'auto' | 'super_admin';
+    review_by?: 'auto' | 'parent' | 'super_admin';
+    group_id?: number | null;
+    group_role?: 'admin' | 'member';
   }>();
 
   const email = (body.email || '').trim().toLowerCase();
@@ -195,6 +198,18 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
     return jsonResponse({ error: '只有超级管理员可以创建超级管理员' }, 403);
   }
 
+  // 可选：创建时直接加入某个项目组（组内身份 admin / member）
+  const groupId = body.group_id ? Number(body.group_id) : null;
+  const groupRole: 'admin' | 'member' = body.group_role === 'admin' ? 'admin' : 'member';
+  if (groupId !== null) {
+    if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组' }, 400);
+    const group = await c.env.DB.prepare('SELECT id FROM project_groups WHERE id = ?').bind(groupId).first();
+    if (!group) return jsonResponse({ error: '项目组不存在' }, 404);
+    if (body.role === 'super_admin' && groupRole === 'admin') {
+      return jsonResponse({ error: '超级管理员无需设置组内身份' }, 400);
+    }
+  }
+
   // 检查邮箱是否已存在
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
   if (existing) {
@@ -205,7 +220,8 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
   const passwordHash = password ? await hashPassword(password) : '';
   // 注册的用户默认需要审核（可显式关闭）
   const requireReview = body.require_review === false ? 0 : 1;
-  const reviewBy = body.review_by === 'super_admin' ? 'super_admin' : 'auto';
+  const reviewBy =
+    body.review_by === 'super_admin' ? 'super_admin' : body.review_by === 'parent' ? 'parent' : 'auto';
 
   const result = await c.env.DB.prepare(
     'INSERT INTO users (email, password_hash, name, role, status, require_review, review_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -213,11 +229,19 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
 
   const userId = result.meta.last_row_id;
 
+  if (groupId !== null) {
+    await c.env.DB.prepare('INSERT INTO user_group_relations (user_id, group_id, role) VALUES (?, ?, ?)')
+      .bind(userId, groupId, groupRole)
+      .run();
+  }
+
   await logAudit(c.env.DB, currentUser.user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
     email: body.email,
     role: body.role,
     require_review: requireReview,
     review_by: reviewBy,
+    group_id: groupId,
+    group_role: groupId !== null ? groupRole : null,
   }));
 
   return jsonResponse({
@@ -230,6 +254,8 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
       status: 'active',
       require_review: requireReview,
       review_by: reviewBy,
+      group_id: groupId,
+      group_role: groupId !== null ? groupRole : null,
       password_set: password ? 1 : 0,
     },
   }, 201);
@@ -246,7 +272,7 @@ users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
     status?: 'active' | 'disabled';
     password?: string;
     require_review?: boolean;
-    review_by?: 'auto' | 'super_admin';
+    review_by?: 'auto' | 'parent' | 'super_admin';
   }>();
   const currentUser = c.get('user');
 
@@ -309,7 +335,9 @@ users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
   }
   if (body.review_by) {
     updates.push('review_by = ?');
-    params.push(body.review_by === 'super_admin' ? 'super_admin' : 'auto');
+    params.push(
+      body.review_by === 'super_admin' ? 'super_admin' : body.review_by === 'parent' ? 'parent' : 'auto',
+    );
   }
   if (body.password) {
     if (body.password.length < 8) {
@@ -329,6 +357,33 @@ users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
   params.push(userId);
 
   await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+
+  // 审核配置变更后，同步该用户「待审核短链」的审核归属
+  if (body.require_review !== undefined || body.review_by) {
+    const latest = await c.env.DB.prepare('SELECT require_review, review_by FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ require_review: number; review_by: string }>();
+    if (latest) {
+      const pending = await c.env.DB.prepare(
+        "SELECT id, group_id FROM short_links WHERE created_by = ? AND review_status = 'pending'",
+      )
+        .bind(userId)
+        .all<{ id: number; group_id: number | null }>();
+      for (const item of pending.results) {
+        let nextGroupId: number | null = null;
+        if (latest.require_review && latest.review_by !== 'super_admin') {
+          nextGroupId = await resolveReviewGroupId(
+            c.env.DB,
+            item.group_id || null,
+            latest.review_by === 'parent' ? 'parent' : 'auto',
+          );
+        }
+        await c.env.DB.prepare('UPDATE short_links SET review_group_id = ? WHERE id = ?')
+          .bind(nextGroupId, item.id)
+          .run();
+      }
+    }
+  }
 
   await logAudit(c.env.DB, currentUser.user_id, 'update_user', c.req.raw, 'user', userId, JSON.stringify(body));
 
