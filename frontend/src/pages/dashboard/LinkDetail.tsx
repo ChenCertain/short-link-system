@@ -4,11 +4,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -19,10 +16,10 @@ import { statsApi } from '@/lib/api'
 import type { LinkStats } from '@/lib/types'
 import { Badge, Button, Card, CardHeader, LoadingBlock, StatusBadge } from '@/components/ui'
 import { QRCodeModal } from '@/components/QRCodeModal'
+import WorldMap from '@/components/WorldMap'
+import RegionRanking from '@/components/RegionRanking'
 import { useToast } from '@/components/Toast'
-import { copyText, formatDateTime } from '@/lib/utils'
-
-const COLORS = ['#2563eb', '#7c3aed', '#059669', '#ea580c', '#0891b2', '#db2777', '#65a30d', '#dc2626']
+import { copyText, formatDateTime, formatMonthDay } from '@/lib/utils'
 
 function shortUrl(domain: string | null | undefined, code: string) {
   const path = domain ? `https://${domain}/${code}` : `/${code}`
@@ -151,8 +148,10 @@ export default function LinkDetail() {
           </p>
         </Card>
         <Card className="p-5">
-          <p className="text-sm text-gray-500 dark:text-gray-400">覆盖地区</p>
-          <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-gray-100">{data.countries.length}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">覆盖国家/地区</p>
+          <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+            {data.countries.filter((item) => item.country !== '未知').length}
+          </p>
         </Card>
       </div>
 
@@ -184,13 +183,20 @@ export default function LinkDetail() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data.trend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.4} />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#9ca3af" />
+                <XAxis dataKey="date" tickFormatter={formatMonthDay} tick={{ fontSize: 12 }} stroke="#9ca3af" />
                 <YAxis tick={{ fontSize: 12 }} stroke="#9ca3af" allowDecimals={false} width={40} />
                 <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }} />
                 <Line type="monotone" dataKey="clicks" name="访问量" stroke="#2563eb" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="地区分布" description="访问者所在国家/地区，颜色越深访问越多" />
+        <div className="px-5 pb-5 pt-2">
+          <WorldMap data={data.countries} />
         </div>
       </Card>
 
@@ -221,29 +227,12 @@ export default function LinkDetail() {
         </Card>
 
         <Card>
-          <CardHeader title="地区分布" description="基于访问者所在国家/地区" />
-          <div className="h-64 px-2 py-4">
-            {data.countries.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-sm text-gray-400">暂无数据</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data.countries}
-                    dataKey="count"
-                    nameKey="country"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                  >
-                    {data.countries.map((_, index) => (
-                      <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+          <CardHeader title="地区排行 Top 10" description="国家 / 省份维度" />
+          <div className="pb-3">
+            <RegionRanking
+              regions={data.regions}
+              total={data.regions.reduce((sum, item) => sum + item.count, 0)}
+            />
           </div>
         </Card>
 
@@ -323,7 +312,7 @@ export default function LinkDetail() {
                       {record.ip || '-'}
                     </td>
                     <td className="hidden px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400 sm:table-cell">
-                      {[record.country, record.city].filter(Boolean).join(' / ') || '-'}
+                      {[record.country, record.region, record.city].filter(Boolean).join(' / ') || '-'}
                     </td>
                     <td className="hidden max-w-[220px] px-4 py-2.5 md:table-cell">
                       <span className="block truncate text-xs text-gray-500 dark:text-gray-400" title={record.referer || ''}>

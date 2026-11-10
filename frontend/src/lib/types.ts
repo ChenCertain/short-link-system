@@ -132,16 +132,52 @@ export interface AccessRecord {
   timestamp: number
   ip: string | null
   country: string | null
+  region?: string | null
   city: string | null
   referer: string | null
   user_agent: string | null
+}
+
+/** 地区分布 */
+export interface GeoCountry {
+  country: string
+  count: number
+}
+
+export interface GeoRegion {
+  country: string
+  region: string
+  count: number
+}
+
+export interface StatsGeo {
+  countries: GeoCountry[]
+  regions: GeoRegion[]
+  total: number
+}
+
+/** 统计可见范围（项目组管理员只能看到自己管理的组） */
+export interface StatsScopeInfo {
+  all: boolean
+  groups: { id: number; name: string; parent_id: number | null }[]
+}
+
+export interface TopLinkItem {
+  id: number
+  short_code: string
+  name: string
+  target_url: string
+  domain_name: string | null
+  group_name: string | null
+  clicks: number
 }
 
 export interface LinkStats {
   link: ShortLink
   trend: { date: string; clicks: number }[]
   referers: { referer: string; count: number }[]
-  countries: { country: string; count: number }[]
+  countries: GeoCountry[]
+  regions: GeoRegion[]
   browsers: { name: string; count: number }[]
   os: { name: string; count: number }[]
   devices: { name: string; count: number }[]
@@ -149,6 +185,7 @@ export interface LinkStats {
 }
 
 export interface OverviewStats {
+  scope?: 'all' | 'groups'
   total_links: number
   active_links: number
   disabled_links: number

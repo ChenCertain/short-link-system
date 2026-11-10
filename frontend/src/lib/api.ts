@@ -11,6 +11,9 @@ import type {
   ProjectGroup,
   ReviewLink,
   ShortLink,
+  StatsGeo,
+  StatsScopeInfo,
+  TopLinkItem,
   UserDetail,
   UserItem,
 } from './types'
@@ -394,9 +397,19 @@ export const linksApi = {
 }
 
 // ============ 统计 ============
+const statsQuery = (days: number, groupId?: number | null) =>
+  `days=${days}${groupId ? `&groupId=${groupId}` : ''}`
+
 export const statsApi = {
-  overview: () => get<OverviewStats>('/api/stats/overview'),
-  trend: (days = 7) => get<{ trend: { date: string; clicks: number }[] }>(`/api/stats/trend?days=${days}`),
+  /** 当前用户可查看的统计范围（超管全站 / 组管理员组内及子组） */
+  scope: () => get<StatsScopeInfo>('/api/stats/scope'),
+  overview: (groupId?: number | null) =>
+    get<OverviewStats>(`/api/stats/overview${groupId ? `?groupId=${groupId}` : ''}`),
+  trend: (days = 7, groupId?: number | null) =>
+    get<{ trend: { date: string; clicks: number }[] }>(`/api/stats/trend?${statsQuery(days, groupId)}`),
+  geo: (days = 7, groupId?: number | null) => get<StatsGeo>(`/api/stats/geo?${statsQuery(days, groupId)}`),
+  topLinks: (days = 7, groupId?: number | null, limit = 10) =>
+    get<{ links: TopLinkItem[] }>(`/api/stats/top-links?${statsQuery(days, groupId)}&limit=${limit}`),
   link: (id: number, days = 7) => get<LinkStats>(`/api/stats/link/${id}?days=${days}`),
 }
 
