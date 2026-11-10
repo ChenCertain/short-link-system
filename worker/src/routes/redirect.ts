@@ -3,7 +3,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../types';
-import { escapeHtml, getRequestIP, hashIP, normalizeHost, RESERVED_CODES } from '../utils';
+import { escapeHtml, getRequestIP, hashIP, normalizeHost, RESERVED_CODES, isSafeHttpUrl } from '../utils';
 import { fetchIndexHtml, serveStatic, HTML_SECURITY_HEADERS } from '../assets';
 import { LINK_CACHE_EDGE_TTL, LINK_CACHE_TTL, linkCacheKey } from '../cache';
 
@@ -387,6 +387,11 @@ redirect.get('/:code', async (c) => {
   // 记录访问日志（异步不阻塞跳转）
   await logAccess(c, link.id);
 
+  // 防御性校验：历史数据或直接改库可能留下非 http(s) 地址，跳转前再拦一次
+  if (!isSafeHttpUrl(link.target_url)) {
+    return noticePage('短链配置异常', '该短链的目标地址无效，请联系管理员处理', 500);
+  }
+
   // 执行跳转（302）
   return Response.redirect(link.target_url, link.redirect_type || 302);
 });
@@ -419,6 +424,14 @@ redirect.post('/:code/verify-password', async (c) => {
   if (!valid) {
     return new Response(JSON.stringify({ error: '密码错误' }), {
       status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // 防御性校验：目标地址必须是 http(s)
+  if (!isSafeHttpUrl(link.target_url)) {
+    return new Response(JSON.stringify({ error: '该短链的目标地址无效，请联系管理员处理' }), {
+      status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
   }
