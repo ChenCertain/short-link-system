@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { AUTHOR_NAME, copyrightText } from '@/lib/brand'
 import {
   BarChart3,
   FolderTree,
@@ -189,8 +190,8 @@ export default function Layout() {
           <Outlet />
         </main>
         <footer className="border-t border-gray-200 px-4 py-4 text-center text-[11px] leading-5 text-gray-400 dark:border-gray-800 dark:text-gray-500">
-          <p>作者：ChenCertain</p>
-          <p>Copyright © {new Date().getFullYear()} ChenCertain. All Rights Reserved.</p>
+          <p>作者：{AUTHOR_NAME}</p>
+          <p>{copyrightText()}</p>
         </footer>
       </div>
     </div>

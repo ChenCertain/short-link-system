@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { AUTHOR_NAME, copyrightText } from '@/lib/brand'
 import {
   ArrowRight,
   BarChart3,
@@ -113,7 +114,7 @@ export default function Home() {
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white/70 px-3 py-1 text-xs font-medium text-gray-600 shadow-sm dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300">
                 <Sparkles className="h-3.5 w-3.5 text-brand-600 dark:text-brand-400" />
-                作者：ChenCertain
+                作者：{AUTHOR_NAME}
               </span>
 
               <h1 className="mt-6 text-4xl font-bold leading-[1.22] tracking-tight sm:text-[2.6rem]">
@@ -298,7 +299,7 @@ export default function Home() {
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 px-4 text-center sm:flex-row sm:justify-between sm:text-left">
           <Logo size={26} text={siteName} textClassName="text-sm" />
           <p className="text-xs leading-5 text-gray-400">
-            作者：ChenCertain · Copyright © {new Date().getFullYear()} ChenCertain. All Rights Reserved.
+            作者：{AUTHOR_NAME} · {copyrightText()}
           </p>
         </div>
       </footer>

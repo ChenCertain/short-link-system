@@ -29,10 +29,14 @@ id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 [vars]
 # Turnstile Site Key：可留空，留空时前端不显示人机验证，后端也跳过校验
 TURNSTILE_SITE_KEY = ""
+# SMTP 邮件服务：用于发送登录验证码与审核通知，支持任意 SSL 465 端口的 SMTP
+# 下面默认值是飞书邮箱的公开地址，可换成你自己的服务商（如 smtp.qq.com / 465）
 SMTP_HOST = "smtp.feishu.cn"
 SMTP_PORT = "465"
-SMTP_USER = "noreply@chencertain.cn"
-SMTP_FROM = "noreply@chencertain.cn"
+# 发信账号与发件人地址：请填成你自己的邮箱，留空则无法发送邮件（仅本机调试可用）
+# 对应的密码请配置为 Worker Secret（SMTP_PASS），不要写在这个文件里
+SMTP_USER = ""
+SMTP_FROM = ""
 # 本实例 Worker 的访问域名（不含协议），仅用于「域名管理」里的 DNS 指引
 # 可留空，留空时使用默认提示；部署后拿到 workers.dev 域名再填也可以
 PAGES_DOMAIN = ""

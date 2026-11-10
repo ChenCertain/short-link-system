@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "基于 Cloudflare 的短链管理系统",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev:worker": "cd worker && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
