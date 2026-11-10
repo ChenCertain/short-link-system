@@ -4,6 +4,7 @@ import {
   BarChart3,
   FolderTree,
   Globe,
+  Home,
   LayoutDashboard,
   Link2,
   LogOut,
@@ -139,6 +140,17 @@ export default function Layout() {
           ))}
         </nav>
 
+        <div className="border-t border-gray-100 px-3 py-2 dark:border-gray-800">
+          <Link
+            to="/"
+            onClick={() => setMobileOpen(false)}
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+          >
+            <Home className="h-4 w-4" />
+            返回首页
+          </Link>
+        </div>
+
         <div className="border-t border-gray-100 p-3 dark:border-gray-800">
           <Link
             to="/dashboard/profile"
@@ -163,18 +175,16 @@ export default function Layout() {
 
       {/* 主内容：独立滚动容器，左侧导航固定不动 */}
       <div ref={scrollRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-gray-200 bg-white/80 px-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/80 lg:px-6">
+        {/* 移动端菜单入口（桌面端不显示顶部条幅） */}
+        <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-gray-200 bg-white/80 px-4 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-900/80 lg:hidden">
           <button
-            className="rounded-md p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 lg:hidden"
+            className="rounded-md p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             onClick={() => setMobileOpen(true)}
             aria-label="打开菜单"
           >
             <Menu className="h-5 w-5" />
           </button>
-          <Link to="/" className="text-sm text-gray-500 hover:text-brand-600 dark:text-gray-400">
-            ← 返回首页
-          </Link>
-        </header>
+        </div>
         <main className="flex-1 p-4 lg:p-6">
           <Outlet />
         </main>
