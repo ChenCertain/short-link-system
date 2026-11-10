@@ -2,7 +2,7 @@
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { jsonResponse, generateShortCode, hashPassword, validateAlias } from '../utils';
+import { jsonResponse, generateShortCode, hashPassword, validateAlias, isSafeHttpUrl } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
 import { invalidateLinkCache } from '../cache';
 import {
@@ -328,11 +328,9 @@ links.post('/', authMiddleware, async (c) => {
     return jsonResponse({ error: '请填写目标链接' }, 400);
   }
 
-  // 验证 URL
-  try {
-    new URL(body.target_url);
-  } catch {
-    return jsonResponse({ error: '目标链接格式不正确' }, 400);
+  // 验证 URL（仅允许 http/https，拒绝 javascript:、data: 等协议）
+  if (!isSafeHttpUrl(body.target_url)) {
+    return jsonResponse({ error: '目标链接格式不正确，仅支持 http:// 或 https://' }, 400);
   }
 
   // 如果指定了项目组，检查权限
@@ -681,7 +679,9 @@ links.put('/:id', authMiddleware, async (c) => {
   }
 
   if (body.target_url) {
-    try { new URL(body.target_url); } catch { return jsonResponse({ error: '目标链接格式不正确' }, 400); }
+    if (!isSafeHttpUrl(body.target_url)) {
+      return jsonResponse({ error: '目标链接格式不正确，仅支持 http:// 或 https://' }, 400);
+    }
     updates.push('target_url = ?'); params.push(body.target_url);
   }
   if (body.name !== undefined) { updates.push('name = ?'); params.push(body.name); }
@@ -833,10 +833,8 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
   const results: { success: boolean; short_code?: string; error?: string; target_url: string }[] = [];
 
   for (const item of body.links) {
-    try {
-      new URL(item.target_url);
-    } catch {
-      results.push({ success: false, error: 'URL格式错误', target_url: item.target_url });
+    if (!isSafeHttpUrl(item.target_url)) {
+      results.push({ success: false, error: 'URL格式错误，仅支持 http:// 或 https://', target_url: item.target_url });
       continue;
     }
 

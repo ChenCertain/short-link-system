@@ -2,7 +2,7 @@
 
 import { createMiddleware } from 'hono/factory';
 import type { Env, JWTPayload, UserRole } from './types';
-import { verifyJWT, getRequestIP, getRequestLocation, hashIP, jsonResponse } from './utils';
+import { verifyJWT, getRequestIP, getRequestLocation, hashIP, jsonResponse, assertJwtSecret } from './utils';
 import { getManagedGroupIds, hasGlobalPermission } from './permissions';
 
 // 从 Authorization header 提取并验证 JWT
@@ -10,6 +10,14 @@ export const authMiddleware = createMiddleware<{
   Bindings: Env;
   Variables: { user: JWTPayload };
 }>(async (c, next) => {
+  // 密钥缺失或仍是占位符时直接拒绝服务，避免空密钥签发/校验被伪造的令牌
+  try {
+    assertJwtSecret(c.env.JWT_SECRET);
+  } catch (err) {
+    console.error('[auth] JWT_SECRET 配置错误：', err);
+    return jsonResponse({ error: '服务端未正确配置 JWT_SECRET，暂时无法提供服务' }, 500);
+  }
+
   const authHeader = c.req.header('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return jsonResponse({ error: '未登录' }, 401);

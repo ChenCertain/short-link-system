@@ -439,7 +439,12 @@ auth.get('/me', async (c) => {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return jsonResponse({ error: '未登录' }, 401);
   }
-  const { verifyJWT } = await import('../utils');
+  const { verifyJWT, assertJwtSecret } = await import('../utils');
+  try {
+    assertJwtSecret(c.env.JWT_SECRET);
+  } catch {
+    return jsonResponse({ error: '服务端未正确配置 JWT_SECRET，暂时无法提供服务' }, 500);
+  }
   const token = authHeader.substring(7);
   const payload = await verifyJWT(token, c.env.JWT_SECRET);
   if (!payload) {

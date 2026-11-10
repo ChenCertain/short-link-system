@@ -21,10 +21,21 @@ import redirect from './routes/redirect';
 const app = new Hono<{ Bindings: Env }>();
 
 // ========== CORS 中间件 ==========
+// 默认同源部署，不放开跨域；如需跨域调用，配置 CORS_ALLOWED_ORIGINS（逗号分隔的来源，精确匹配）
 app.use('*', async (c, next) => {
-  c.header('Access-Control-Allow-Origin', '*');
-  c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  const origin = c.req.header('Origin');
+  const allowedOrigins = (c.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (origin && allowedOrigins.includes(origin)) {
+    c.header('Access-Control-Allow-Origin', origin);
+    c.header('Vary', 'Origin');
+    c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+
   if (c.req.method === 'OPTIONS') {
     return c.body(null, 204);
   }

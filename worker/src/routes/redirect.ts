@@ -270,6 +270,64 @@ async function spaPage(c: Context<{ Bindings: Env }>, status: number): Promise<R
   });
 }
 
+type LinkAvailabilityState = {
+  id: number;
+  review_status: string;
+  review_note?: string | null;
+  status: string;
+  expires_at?: number | null;
+};
+
+type LinkBlockReason = { title: string; message: string; status: number };
+
+// 统一校验短链是否可访问（审核状态 / 停用 / 过期）
+// 跳转页与密码校验接口共用同一套规则，避免通过密码接口绕过状态检查
+async function getLinkBlockReason(env: Env, link: LinkAvailabilityState): Promise<LinkBlockReason | null> {
+  if (link.review_status === 'pending') {
+    return { title: '短链审核中', message: '该短链正在等待管理员审核，审核通过后即可访问', status: 403 };
+  }
+  if (link.review_status === 'rejected') {
+    return {
+      title: '短链未通过审核',
+      message: link.review_note ? `原因：${link.review_note}` : '该短链未通过管理员审核',
+      status: 403,
+    };
+  }
+  if (link.status === 'disabled') {
+    return { title: '短链已停用', message: '该短链已被管理员停用，暂时无法访问', status: 403 };
+  }
+  if (link.expires_at && link.expires_at < Math.floor(Date.now() / 1000)) {
+    await env.DB.prepare("UPDATE short_links SET status = 'expired' WHERE id = ?").bind(link.id).run();
+    return { title: '短链已过期', message: '该短链已超过有效期，无法继续访问', status: 410 };
+  }
+  if (link.status === 'expired') {
+    return { title: '短链已过期', message: '该短链已超过有效期，无法继续访问', status: 410 };
+  }
+  return null;
+}
+
+// 记录访问日志（异步执行，失败不影响跳转）
+async function logAccess(c: Context<{ Bindings: Env }>, linkId: number): Promise<void> {
+  try {
+    const cf = c.req.raw.cf as { country?: string; region?: string; city?: string } | undefined;
+    const ip = getRequestIP(c.req.raw);
+    const ip_hash = await hashIP(ip, 'access-salt');
+    const ua = c.req.header('User-Agent') || null;
+    const referer = c.req.header('Referer') || null;
+
+    c.executionCtx.waitUntil(
+      c.env.DB.batch([
+        c.env.DB.prepare(
+          'INSERT INTO access_logs (short_link_id, ip, ip_hash, country, region, city, user_agent, referer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(linkId, ip, ip_hash, cf?.country || null, cf?.region || null, cf?.city || null, ua, referer),
+        c.env.DB.prepare('UPDATE short_links SET click_count = click_count + 1 WHERE id = ?').bind(linkId),
+      ])
+    );
+  } catch {
+    // 日志记录失败不影响跳转
+  }
+}
+
 // 短链跳转: GET /{short_code}
 redirect.get('/:code', async (c) => {
   const code = c.req.param('code');
@@ -287,27 +345,10 @@ redirect.get('/:code', async (c) => {
     return spaPage(c, 404);
   }
 
-  // 审核状态检查
-  if (link.review_status === 'pending') {
-    return noticePage('短链审核中', '该短链正在等待管理员审核，审核通过后即可访问', 403);
-  }
-  if (link.review_status === 'rejected') {
-    return noticePage('短链未通过审核', link.review_note ? `原因：${link.review_note}` : '该短链未通过管理员审核', 403);
-  }
-
-  // 检查状态
-  if (link.status === 'disabled') {
-    return noticePage('短链已停用', '该短链已被管理员停用，暂时无法访问', 403);
-  }
-
-  // 检查过期
-  if (link.expires_at && link.expires_at < Math.floor(Date.now() / 1000)) {
-    await c.env.DB.prepare("UPDATE short_links SET status = 'expired' WHERE id = ?").bind(link.id).run();
-    return noticePage('短链已过期', '该短链已超过有效期，无法继续访问', 410);
-  }
-
-  if (link.status === 'expired') {
-    return noticePage('短链已过期', '该短链已超过有效期，无法继续访问', 410);
+  // 审核状态 / 停用 / 过期检查（与密码校验接口共用同一套规则）
+  const blockReason = await getLinkBlockReason(c.env, link);
+  if (blockReason) {
+    return noticePage(blockReason.title, blockReason.message, blockReason.status);
   }
 
   // 如果有密码保护，检查密码
@@ -344,25 +385,7 @@ redirect.get('/:code', async (c) => {
   }
 
   // 记录访问日志（异步不阻塞跳转）
-  try {
-    const cf = c.req.raw.cf as { country?: string; region?: string; city?: string } | undefined;
-    const ip = getRequestIP(c.req.raw);
-    const ip_hash = await hashIP(ip, 'access-salt');
-    const ua = c.req.header('User-Agent') || null;
-    const referer = c.req.header('Referer') || null;
-
-    // 写入访问日志（batch 合并为一次往返，且不阻塞跳转）
-    c.executionCtx.waitUntil(
-      c.env.DB.batch([
-        c.env.DB.prepare(
-          'INSERT INTO access_logs (short_link_id, ip, ip_hash, country, region, city, user_agent, referer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(link.id, ip, ip_hash, cf?.country || null, cf?.region || null, cf?.city || null, ua, referer),
-        c.env.DB.prepare('UPDATE short_links SET click_count = click_count + 1 WHERE id = ?').bind(link.id),
-      ])
-    );
-  } catch {
-    // 日志记录失败不影响跳转
-  }
+  await logAccess(c, link.id);
 
   // 执行跳转（302）
   return Response.redirect(link.target_url, link.redirect_type || 302);
@@ -382,6 +405,15 @@ redirect.post('/:code/verify-password', async (c) => {
     });
   }
 
+  // 审核 / 停用 / 过期检查：与正常跳转一致，密码正确也不放行
+  const blockReason = await getLinkBlockReason(c.env, link);
+  if (blockReason) {
+    return new Response(JSON.stringify({ error: blockReason.message, code: 'LINK_UNAVAILABLE' }), {
+      status: blockReason.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const { verifyPassword } = await import('../utils');
   const valid = await verifyPassword(body.password, link.password);
   if (!valid) {
@@ -390,6 +422,9 @@ redirect.post('/:code/verify-password', async (c) => {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  // 密码校验通过后视为一次有效访问，与直接跳转保持一致的统计口径
+  await logAccess(c, link.id);
 
   return new Response(JSON.stringify({ redirect_url: link.target_url, redirect_type: link.redirect_type }), {
     status: 200,

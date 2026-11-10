@@ -108,8 +108,28 @@ export async function hashIP(ip: string, salt: string): Promise<string> {
   return bytesToHex(new Uint8Array(hashBuffer)).slice(0, 16);
 }
 
+// JWT 密钥校验：缺失或仍为模板占位符时直接拒绝，避免空密钥参与签名导致令牌可伪造
+export function assertJwtSecret(secret: string | undefined): string {
+  const value = (secret || '').trim();
+  if (value === '' || /^REPLACE_WITH/i.test(value)) {
+    throw new Error('JWT_SECRET 未配置或仍为占位符，已拒绝签发/校验令牌');
+  }
+  return value;
+}
+
+// 目标链接协议白名单：仅允许 http/https，阻止 javascript:、data: 等危险协议
+export function isSafeHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // JWT 签发（HMAC-SHA256）
 export async function signJWT(payload: Omit<JWTPayload, 'iat' | 'exp'> & { exp?: number }, secret: string): Promise<string> {
+  const signingSecret = assertJwtSecret(secret);
   const iat = Math.floor(Date.now() / 1000);
   const exp = payload.exp ?? iat + 7 * 24 * 3600; // 默认7天
   const fullPayload: JWTPayload = { ...payload, iat, exp };
@@ -120,7 +140,7 @@ export async function signJWT(payload: Omit<JWTPayload, 'iat' | 'exp'> & { exp?:
 
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret),
+    encoder.encode(signingSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -132,13 +152,14 @@ export async function signJWT(payload: Omit<JWTPayload, 'iat' | 'exp'> & { exp?:
 
 // JWT 验证
 export async function verifyJWT(token: string, secret: string): Promise<JWTPayload | null> {
+  const verifyingSecret = assertJwtSecret(secret);
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret),
+    encoder.encode(verifyingSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['verify']

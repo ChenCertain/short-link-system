@@ -17,6 +17,8 @@ export interface Env {
   PAGES_DOMAIN?: string;
   // 本 Worker 的 workers.dev 域名（不含协议），用于域名管理里的 CNAME 目标指引
   WORKER_HOST?: string;
+  // 允许跨域访问的来源白名单（逗号分隔）。默认不放开跨域；同源部署无需配置
+  CORS_ALLOWED_ORIGINS?: string;
 }
 
 // 用户角色（项目组管理员由 user_group_relations.role = 'admin' 表达）
