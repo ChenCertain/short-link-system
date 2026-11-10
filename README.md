@@ -1,6 +1,6 @@
 ﻿# 短链接管理系统
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: AGPL--3.0--or--later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](./LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 
@@ -165,4 +165,8 @@ npm run build    # 构建前端 + 打包 Worker（本地自检用）
 
 ## License
 
-[MIT](./LICENSE) © 2026 ChenCertain
+本项目采用 [GNU Affero General Public License v3.0 或更高版本（AGPL-3.0-or-later）](./LICENSE) 许可。
+
+允许商业使用、修改与分发；分发修改版本时必须保留许可证、版权和原始项目署名。若将修改版作为网络服务提供，也必须向该服务的用户提供对应源代码。详细署名要求见 [NOTICE](./NOTICE)，补充条款见 [ADDITIONAL_TERMS.md](./ADDITIONAL_TERMS.md)。
+
+项目名称与 Logo 不随本许可证授权，详见 [TRADEMARKS.md](./TRADEMARKS.md)。

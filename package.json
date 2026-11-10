@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "基于 Cloudflare 的短链管理系统",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=18"
   },
