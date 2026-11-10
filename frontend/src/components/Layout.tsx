@@ -37,12 +37,12 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { to: '/dashboard', label: '概览', icon: LayoutDashboard, superOnly: true, end: true },
+  { to: '/dashboard', label: '概览', icon: LayoutDashboard, needGroupAdmin: true, end: true },
   { to: '/dashboard/links', label: '短链管理', icon: Link2 },
   { to: '/dashboard/groups', label: '项目组', icon: FolderTree },
   { to: '/dashboard/members', label: '成员管理', icon: UsersRound, needGroupAdmin: true },
   { to: '/dashboard/review', label: '短链审核', icon: ShieldCheck, groupPermission: 'link.review' },
-  { to: '/dashboard/stats', label: '指标统计', icon: BarChart3, superOnly: true },
+  { to: '/dashboard/stats', label: '指标统计', icon: BarChart3, needGroupAdmin: true },
   { to: '/dashboard/users', label: '用户管理', icon: Users, globalPermission: 'user.manage' },
   { to: '/dashboard/audit', label: '操作审计', icon: ScrollText, globalPermission: 'audit.view' },
   { to: '/dashboard/domains', label: '域名管理', icon: Globe, superOnly: true },

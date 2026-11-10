@@ -37,6 +37,7 @@ import {
   splitProtocol,
   withProtocol,
 } from '@/components/EditLinkModal'
+import { buildGroupPaths } from '@/lib/groups'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { copyText, formatDateTime, localInputToTimestamp } from '@/lib/utils'
@@ -119,6 +120,15 @@ export default function Links() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   const groupOptions = useMemo(() => flattenGroups(groups), [groups])
+
+  // 项目组完整路径（父组 / 子组），用于表格展示
+  const groupPathMap = useMemo(() => buildGroupPaths(filterOptions.groups), [filterOptions.groups])
+
+  // 含有子组的项目组（筛选时提示会连带查询子组）
+  const parentGroupIds = useMemo(
+    () => new Set(filterOptions.groups.filter((group) => group.parent_id).map((group) => group.parent_id as number)),
+    [filterOptions.groups],
+  )
 
   // 平台默认短链域名；未设置为空字符串，表示暂无默认域名
   const globalDefaultDomainId = useMemo(() => {
@@ -391,6 +401,7 @@ export default function Links() {
               {groupOptions.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.label}
+                  {parentGroupIds.has(g.id) ? '（含子组）' : ''}
                 </option>
               ))}
             </Select>
@@ -461,7 +472,7 @@ export default function Links() {
                     <th className="px-4 py-3 font-medium">短链 / 名称</th>
                     <th className="px-4 py-3 font-medium">目标链接</th>
                     <th className="px-4 py-3 font-medium">状态</th>
-                    <th className="hidden px-4 py-3 font-medium lg:table-cell">项目组</th>
+                    <th className="hidden px-4 py-3 font-medium md:table-cell">项目组</th>
                     <th className="hidden px-4 py-3 font-medium lg:table-cell">创建者</th>
                     <th className="px-4 py-3 font-medium">访问</th>
                     <th className="hidden px-4 py-3 font-medium xl:table-cell">创建时间</th>
@@ -507,8 +518,10 @@ export default function Links() {
                           </p>
                         )}
                       </td>
-                      <td className="hidden px-4 py-3 text-gray-600 dark:text-gray-400 lg:table-cell">
-                        {link.group_name || '-'}
+                      <td className="hidden max-w-[200px] px-4 py-3 text-gray-600 dark:text-gray-400 md:table-cell">
+                        <span className="block truncate" title={link.group_id ? groupPathMap.get(link.group_id) || link.group_name || '' : ''}>
+                          {link.group_id ? groupPathMap.get(link.group_id) || link.group_name || '-' : '-'}
+                        </span>
                       </td>
                       <td className="hidden px-4 py-3 lg:table-cell">
                         <p className="text-gray-700 dark:text-gray-300">{link.creator_name || '-'}</p>

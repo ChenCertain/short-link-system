@@ -13,7 +13,7 @@ import { Activity, Clock, FolderTree, Link2, MousePointerClick, Users } from 'lu
 import { linksApi, statsApi } from '@/lib/api'
 import type { OverviewStats, ShortLink } from '@/lib/types'
 import { Button, Card, CardHeader, LoadingBlock, StatusBadge } from '@/components/ui'
-import { formatDateTime } from '@/lib/utils'
+import { formatDateTime, formatMonthDay } from '@/lib/utils'
 
 function StatCard({
   label,
@@ -47,27 +47,39 @@ export default function Overview() {
   const [links, setLinks] = useState<ShortLink[]>([])
   const [days, setDays] = useState(7)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
+    setError('')
     Promise.all([statsApi.overview(), statsApi.trend(days), linksApi.list({ pageSize: 5 })])
       .then(([s, t, l]) => {
         setStats(s)
         setTrend(t.trend)
         setLinks(l.links)
       })
-      .catch(() => {
-        // 错误时保持空状态
-      })
+      .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false))
   }, [days])
 
   if (loading && !stats) return <LoadingBlock />
 
+  if (error && !stats) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-200">
+        <p className="font-medium">无法查看概览数据</p>
+        <p className="mt-1 text-xs">{error}</p>
+        <p className="mt-1 text-xs">项目组管理员需要所在组开启「查看短链数据」权限。</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">概览</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">短链系统整体运行情况</p>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          {stats?.scope === 'groups' ? '所在项目组（含全部子组）的运行情况' : '短链系统整体运行情况'}
+        </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -96,13 +108,13 @@ export default function Overview() {
           tone="bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400"
         />
         <StatCard
-          label="用户数"
+          label={stats?.scope === 'groups' ? '组内成员' : '用户数'}
           value={stats?.total_users ?? 0}
           icon={Users}
           tone="bg-cyan-50 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400"
         />
         <StatCard
-          label="项目组"
+          label={stats?.scope === 'groups' ? '项目组（含子组）' : '项目组'}
           value={stats?.total_groups ?? 0}
           icon={FolderTree}
           tone="bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400"
@@ -124,7 +136,7 @@ export default function Overview() {
       <Card>
         <CardHeader
           title="访问趋势"
-          description="按天统计短链访问次数"
+          description="按北京时间（UTC+8）自然日统计访问次数"
           action={
             <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
               {[7, 30].map((d) => (
@@ -156,7 +168,7 @@ export default function Overview() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.4} />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#9ca3af" />
+                <XAxis dataKey="date" tickFormatter={formatMonthDay} tick={{ fontSize: 12 }} stroke="#9ca3af" />
                 <YAxis tick={{ fontSize: 12 }} stroke="#9ca3af" allowDecimals={false} width={40} />
                 <Tooltip
                   contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }}

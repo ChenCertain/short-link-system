@@ -54,7 +54,7 @@ export default function App() {
                 <Route
                   index
                   element={
-                    <ProtectedRoute roles={['super_admin']}>
+                    <ProtectedRoute groupAdmin>
                       <Overview />
                     </ProtectedRoute>
                   }
@@ -81,7 +81,7 @@ export default function App() {
                 <Route
                   path="stats"
                   element={
-                    <ProtectedRoute roles={['super_admin']}>
+                    <ProtectedRoute groupAdmin>
                       <Analytics />
                     </ProtectedRoute>
                   }

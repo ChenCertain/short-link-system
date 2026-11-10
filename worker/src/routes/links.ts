@@ -89,8 +89,20 @@ links.get('/', authMiddleware, async (c) => {
   }
 
   if (groupId) {
-    conditions.push('sl.group_id = ?');
-    params.push(parseInt(groupId));
+    const selected = parseInt(groupId);
+    if (Number.isFinite(selected)) {
+      // 选择父组时，连同其所有子组的短链一并展示
+      const selfAndChildren = await expandGroupIdsWithDescendants(c.env.DB, [selected]);
+      // 非超管只保留自己可见 / 可管理的组，避免越权探测
+      const allowed = isSuperAdmin
+        ? selfAndChildren
+        : selfAndChildren.filter((id) => visibleGroupIds.includes(id) || managedIds.includes(id));
+      if (allowed.length === 0) {
+        return jsonResponse({ links: [], total: 0, page, pageSize });
+      }
+      conditions.push(`sl.group_id IN (${allowed.map(() => '?').join(',')})`);
+      params.push(...allowed);
+    }
   }
 
   if (domainId) {
