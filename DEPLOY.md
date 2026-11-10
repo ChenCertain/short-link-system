@@ -6,14 +6,14 @@
 数据放在 **D1**（数据库），验证码放 **KV**（缓存）。
 **一个仓库可以部署成很多个独立站点**，每个站点用自己的 D1 和 KV，数据互不影响。
 
-一共 10 步，大约 10 分钟。
+正文共 9 个步骤（外加 2 个可选步骤），大约 10 分钟。
 
 ---
 
 ## 开始前准备
 
 - 一个 Cloudflare 账号（免费版够用）
-- 一个 GitHub 账号，并且仓库已经推到 GitHub（本仓库：`ChenCertain/short-link-system`）
+- 一个 GitHub 账号，并且代码已经推到自己的仓库（Fork 或克隆本仓库后推到你的账号下，形如 `<你的账号>/short-link-system`）
 - 电脑上装了 Node.js（18 或更新），只有「第 6 步跑数据库迁移」和「本地开发」需要
 
 不用提前准备域名，也不用提前准备 Turnstile，先用 Cloudflare 送的免费域名跑起来，以后随时补。
@@ -46,11 +46,11 @@ Cloudflare 控制台 → 左侧 **Storage & Databases** → **D1 SQL Database** 
 
 1. 打开 **Workers & Pages** → **Create** → **Workers** → **Connect to Git**
 2. 第一次会跳去 GitHub 授权，点同意
-3. **如果仓库是私有的**（本仓库就是），还要多做一步：
+3. **如果仓库是私有的**，还要多做一步：
    GitHub → 右上角头像 → **Settings** → **Applications** → **Cloudflare Workers and Pages** → **Configure**
    → Repository access → **Only select repositories** → 勾选 `short-link-system` → Save
-   不做这一步，仓库不会出现在列表里
-4. 回到 Cloudflare，选中仓库 `ChenCertain/short-link-system`，点下一步
+   不做这一步，仓库不会出现在列表里（公开仓库可跳过）
+4. 回到 Cloudflare，选中你自己的 `short-link-system` 仓库，点下一步
 
 **构建配置照抄下面这张表：**
 
@@ -77,7 +77,7 @@ Cloudflare 控制台 → 左侧 **Storage & Databases** → **D1 SQL Database** 
 | `PAGES_DOMAIN` | 可选 | 访问域名，不知道就**先空着**，不影响部署 |
 | `TURNSTILE_SITE_KEY` | 可选 | 人机验证 Key，不知道就**先空着** |
 | `SMTP_HOST` / `SMTP_PORT` | 可选 | 邮箱服务器，默认飞书 `smtp.feishu.cn` / `465` |
-| `SMTP_USER` / `SMTP_FROM` | 可选 | 发验证码的邮箱，不填就用仓库默认值 |
+| `SMTP_USER` / `SMTP_FROM` | 建议填 | 你自己的发信邮箱（仓库里默认留空，不填就发不出邮件） |
 
 **只填前两个也能部署**。仓库里的 `worker/wrangler.toml` 不用动，构建时会自动按你的变量生成一份临时配置，不会写回仓库，所以多个站点互不影响。
 
@@ -152,6 +152,8 @@ npx wrangler d1 migrations apply short-link-db --remote --config wrangler.build.
 
 之后就从这个地址的 `/login` 登录，`/init` 会自动失效。
 
+> 必须先把第 4 步的 `SMTP_USER` / `SMTP_FROM` 和第 7 步的 `SMTP_PASS` 配好，线上才能收到验证码：邮箱未配置时接口不会把验证码返回给浏览器（只有 `localhost` 本地调试才会自动填充），因此会无法完成初始化。
+>
 > 没收到邮件：检查 `SMTP_USER` / `SMTP_FROM` / `SMTP_PASS` 是否填对，Cloudflare 只支持 465 端口。
 
 ---
