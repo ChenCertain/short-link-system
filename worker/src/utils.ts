@@ -236,6 +236,20 @@ export function getRequestLocation(request: Request): string | null {
   return parts.length ? parts.join(' ') : null;
 }
 
+// ========== 北京时间（UTC+8）==========
+// 系统统一按北京时间展示与统计，避免服务器 / 浏览器时区不同导致日期错位
+export const BEIJING_OFFSET = 8 * 3600;
+
+/** 北京时间「今天」的起点（Unix 秒） */
+export function beijingDayStart(reference: number = Math.floor(Date.now() / 1000)): number {
+  return reference - ((reference + BEIJING_OFFSET) % 86400);
+}
+
+/** 把 Unix 秒格式化为北京时间的 YYYY-MM-DD */
+export function beijingDateKey(timestamp: number): string {
+  return new Date((timestamp + BEIJING_OFFSET) * 1000).toISOString().slice(0, 10);
+}
+
 // 解析 User-Agent 简化信息
 export function parseUserAgent(ua: string | null): { browser: string; os: string; device: string } {
   if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Unknown' };

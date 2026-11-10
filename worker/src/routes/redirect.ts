@@ -345,7 +345,7 @@ redirect.get('/:code', async (c) => {
 
   // 记录访问日志（异步不阻塞跳转）
   try {
-    const cf = c.req.raw.cf as { country?: string; city?: string } | undefined;
+    const cf = c.req.raw.cf as { country?: string; region?: string; city?: string } | undefined;
     const ip = getRequestIP(c.req.raw);
     const ip_hash = await hashIP(ip, 'access-salt');
     const ua = c.req.header('User-Agent') || null;
@@ -355,8 +355,8 @@ redirect.get('/:code', async (c) => {
     c.executionCtx.waitUntil(
       c.env.DB.batch([
         c.env.DB.prepare(
-          'INSERT INTO access_logs (short_link_id, ip, ip_hash, country, city, user_agent, referer) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).bind(link.id, ip, ip_hash, cf?.country || null, cf?.city || null, ua, referer),
+          'INSERT INTO access_logs (short_link_id, ip, ip_hash, country, region, city, user_agent, referer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(link.id, ip, ip_hash, cf?.country || null, cf?.region || null, cf?.city || null, ua, referer),
         c.env.DB.prepare('UPDATE short_links SET click_count = click_count + 1 WHERE id = ?').bind(link.id),
       ])
     );
