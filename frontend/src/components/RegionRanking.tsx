@@ -36,7 +36,11 @@ export default function RegionRanking({ regions, total, limit = 10 }: RegionRank
               </span>
             </div>
             <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-              <div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.max(percent, 2)}%` }} />
+              <div
+                className="h-full rounded-full bg-brand-500"
+                // 上限 100%：数据口径不一致时 percent 可能 >100，条形会撑出容器（移动端表现为被裁切）
+                style={{ width: `${Math.min(Math.max(percent, 2), 100)}%` }}
+              />
             </div>
           </li>
         )

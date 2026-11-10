@@ -115,11 +115,11 @@ export default function InitAdmin() {
   }
 
   if (checking) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">正在检查系统状态...</div>
+    return <div className="flex min-h-dvh items-center justify-center text-sm text-gray-500">正在检查系统状态...</div>
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 py-10 dark:from-gray-950 dark:to-gray-900">
+    <div className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 py-10 dark:from-gray-950 dark:to-gray-900">
       <div className="w-full max-w-md">
         <div className="mb-6 flex justify-center">
           <Logo size={44} text="短链管理" textClassName="text-lg" className="gap-2.5" />

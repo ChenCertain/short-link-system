@@ -63,7 +63,7 @@ export default function Home() {
   }, [])
 
   return (
-    <div className="relative isolate min-h-screen overflow-hidden bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+    <div className="relative isolate min-h-dvh overflow-hidden bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
       {/* 背景网格 + 光斑 */}
       <div className="hero-grid pointer-events-none absolute inset-x-0 top-0 -z-20 h-[600px]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[680px] overflow-hidden">
@@ -111,7 +111,8 @@ export default function Home() {
         {/* Hero */}
         <section className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pt-24">
           <div className="grid items-center gap-14 lg:grid-cols-[1.12fr_0.88fr]">
-            <div>
+            {/* min-w-0：grid item 默认 min-width:auto，会被内容最小宽度撑开，导致手机上右侧文字被裁切 */}
+            <div className="min-w-0">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white/70 px-3 py-1 text-xs font-medium text-gray-600 shadow-sm dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300">
                 <Sparkles className="h-3.5 w-3.5 text-brand-600 dark:text-brand-400" />
                 作者：{AUTHOR_NAME}
@@ -158,7 +159,7 @@ export default function Home() {
             </div>
 
             {/* 短链示意卡片 */}
-            <div className="relative">
+            <div className="relative min-w-0">
               <div className="absolute -inset-4 -z-10 rounded-[2rem] bg-gradient-to-tr from-brand-500/10 via-transparent to-cyan-400/10 blur-xl" />
               <div className="rounded-2xl border border-gray-200/80 bg-white/80 p-5 shadow-2xl shadow-gray-900/5 backdrop-blur dark:border-gray-800 dark:bg-gray-900/80">
                 <div className="flex items-center gap-1.5">

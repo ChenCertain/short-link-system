@@ -6,6 +6,18 @@
   color-scheme: light;
 }
 
+/* 禁止移动端浏览器自动放大文字（Android 的 font boosting、iOS 横屏都会放大，
+   导致小字号文本溢出容器被裁切）；同时保留用户双指缩放手势 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* 横向可滚动的表格容器：移动端使用惯性滚动，避免卡顿感 */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
 /* 深色模式下让滚动条、表单控件等原生元素也使用深色 */
 .dark {
   color-scheme: dark;

@@ -225,7 +225,7 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 dark:from-gray-950 dark:to-gray-900">
+    <div className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 dark:from-gray-950 dark:to-gray-900">
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-between">
           <Link

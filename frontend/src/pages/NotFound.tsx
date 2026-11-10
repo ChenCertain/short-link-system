@@ -44,7 +44,7 @@ export default function NotFound() {
   ]
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-white dark:bg-gray-950">
+    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-white dark:bg-gray-950">
       {/* 背景装饰 */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -left-32 -top-32 h-80 w-80 rounded-full bg-brand-200/60 blur-3xl dark:bg-brand-700/20" />

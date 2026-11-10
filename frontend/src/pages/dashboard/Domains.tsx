@@ -203,14 +203,15 @@ export default function Domains() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-medium text-gray-900 dark:text-gray-100">{d.domain}</p>
+                    {/* break-all：域名是不含空格的连续字符串，窄屏下必须允许任意位置断行，否则会溢出被裁 */}
+                    <p className="min-w-0 break-all font-medium text-gray-900 dark:text-gray-100">{d.domain}</p>
                     {d.is_default_short_link === 1 && (
                       <Badge tone="purple">
                         <Star className="mr-0.5 h-3 w-3" /> 默认
                       </Badge>
                     )}
                   </div>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  <p className="mt-0.5 break-words text-xs text-gray-500 dark:text-gray-400">
                     {TYPE_LABELS[d.type] || d.type} · 添加于 {formatDateTime(d.created_at)}
                   </p>
                 </div>
