@@ -8,6 +8,7 @@ import { Button, Card, ErrorText, Input, Label } from '@/components/ui'
 import { Turnstile } from '@/components/Turnstile'
 import { Logo } from '@/components/Logo'
 import { AUTHOR_NAME, copyrightText } from '@/lib/brand'
+import { SourceLink } from '@/components/SourceLink'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -450,6 +451,9 @@ export default function Login() {
         <p className="mt-6 text-center text-[11px] leading-5 text-gray-400 dark:text-gray-500">
           <span className="block">作者：{AUTHOR_NAME}</span>
           {copyrightText()}
+          <span className="mt-1 block">
+            源代码：<SourceLink />
+          </span>
         </p>
       </div>
     </div>

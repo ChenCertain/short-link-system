@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AUTHOR_NAME, copyrightText } from '@/lib/brand'
+import { SourceLink } from '@/components/SourceLink'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -188,6 +189,9 @@ export default function NotFound() {
       <footer className="relative z-10 border-t border-gray-200/70 py-6 text-center text-xs leading-6 text-gray-400 dark:border-gray-800/70">
         <p>作者：{AUTHOR_NAME}</p>
         <p>{copyrightText()}</p>
+        <p>
+          源代码：<SourceLink />
+        </p>
       </footer>
     </div>
   )

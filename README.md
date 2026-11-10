@@ -169,4 +169,6 @@ npm run build    # 构建前端 + 打包 Worker（本地自检用）
 
 允许商业使用、修改与分发；分发修改版本时必须保留许可证、版权和原始项目署名。若将修改版作为网络服务提供，也必须向该服务的用户提供对应源代码。详细署名要求见 [NOTICE](./NOTICE)，补充条款见 [ADDITIONAL_TERMS.md](./ADDITIONAL_TERMS.md)。
 
+为满足 AGPL 第 13 条，各页面页脚常驻「源代码」入口（地址定义在 `frontend/src/lib/brand.ts` 的 `SOURCE_URL`）。部署修改版时请将其改为你实际运行的源码地址，不要直接删除。
+
 项目名称与 Logo 不随本许可证授权，详见 [TRADEMARKS.md](./TRADEMARKS.md)。
