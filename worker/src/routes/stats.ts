@@ -238,7 +238,14 @@ stats.get('/geo', async (c) => {
     .bind(start, ...log.params)
     .all<{ country: string; region: string; count: number }>();
 
-  const total = countries.results.reduce((sum, item) => sum + item.count, 0);
+  const totalRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total FROM access_logs al${log.join} WHERE al.timestamp >= ?${log.sql}`,
+  )
+    .bind(start, ...log.params)
+    .first<{ total: number }>();
+
+  // 总访问量单独统计，避免用被 LIMIT 截断的国家列表求和导致占比偏大
+  const total = totalRow?.total || 0;
 
   return jsonResponse({
     countries: countries.results,

@@ -20,6 +20,7 @@ import WorldMap from '@/components/WorldMap'
 import RegionRanking from '@/components/RegionRanking'
 import { useToast } from '@/components/Toast'
 import { copyText, formatDateTime, formatMonthDay } from '@/lib/utils'
+import { countryLabel } from '@/lib/countries'
 
 function shortUrl(domain: string | null | undefined, code: string) {
   const path = domain ? `https://${domain}/${code}` : `/${code}`
@@ -39,13 +40,24 @@ export default function LinkDetail() {
 
   useEffect(() => {
     if (!linkId) return
+    // 切换天数时丢弃过期响应，避免旧数据覆盖新结果
+    let cancelled = false
     setLoading(true)
     setError('')
     statsApi
       .link(linkId, days)
-      .then(setData)
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
+      .then((result) => {
+        if (!cancelled) setData(result)
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [linkId, days])
 
   if (loading && !data) return <LoadingBlock />
@@ -231,7 +243,7 @@ export default function LinkDetail() {
           <div className="pb-3">
             <RegionRanking
               regions={data.regions}
-              total={data.regions.reduce((sum, item) => sum + item.count, 0)}
+              total={data.trend.reduce((sum, item) => sum + item.clicks, 0)}
             />
           </div>
         </Card>
@@ -312,7 +324,9 @@ export default function LinkDetail() {
                       {record.ip || '-'}
                     </td>
                     <td className="hidden px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400 sm:table-cell">
-                      {[record.country, record.region, record.city].filter(Boolean).join(' / ') || '-'}
+                      {[record.country ? countryLabel(record.country) : null, record.region, record.city]
+                        .filter(Boolean)
+                        .join(' / ') || '-'}
                     </td>
                     <td className="hidden max-w-[220px] px-4 py-2.5 md:table-cell">
                       <span className="block truncate text-xs text-gray-500 dark:text-gray-400" title={record.referer || ''}>

@@ -36,18 +36,28 @@ export default function Analytics() {
 
   useEffect(() => {
     if (!scope) return
+    // 快速切换范围 / 天数时丢弃过期响应，避免旧数据覆盖新结果
+    let cancelled = false
     const selected = groupId === '' ? undefined : groupId
     setLoading(true)
     setError('')
     Promise.all([statsApi.overview(selected), statsApi.trend(days, selected), statsApi.geo(days, selected), statsApi.topLinks(days, selected)])
       .then(([s, t, g, top]) => {
+        if (cancelled) return
         setStats(s)
         setTrend(t.trend)
         setGeo(g)
         setTopLinks(top.links)
       })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [scope, groupId, days])
 
   if (error && !stats) {

@@ -7,5 +7,6 @@ export function countryLabel(code?: string | null): string {
   if (!code) return '未知'
   const upper = code.toUpperCase()
   if (upper === 'T1') return 'Tor 网络'
-  return COUNTRY_NAME_ZH[upper]; upper
+  // 未收录的代码（含后端 COALESCE 出的「未知」）回退为原始代码，避免渲染出空字符串
+  return COUNTRY_NAME_ZH[upper] || upper
 }

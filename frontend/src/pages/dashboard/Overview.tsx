@@ -50,15 +50,24 @@ export default function Overview() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    let cancelled = false
     setError('')
     Promise.all([statsApi.overview(), statsApi.trend(days), linksApi.list({ pageSize: 5 })])
       .then(([s, t, l]) => {
+        if (cancelled) return
         setStats(s)
         setTrend(t.trend)
         setLinks(l.links)
       })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [days])
 
   if (loading && !stats) return <LoadingBlock />
