@@ -35,7 +35,7 @@ export default function NotFound() {
     'inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white/80 px-5 text-sm font-medium text-gray-700 backdrop-blur transition hover:border-gray-300 hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200 dark:hover:border-gray-700 dark:hover:bg-gray-900 dark:focus-visible:ring-offset-gray-950'
 
   const shortcuts = [
-    { to: '/', label: '首页精选', desc: '浏览公开短链', icon: Home },
+    { to: '/', label: '产品首页', desc: '了解系统功能与使用流程', icon: Home },
     ...(user ? [{ to: '/dashboard/links', label: '短链管理', desc: '管理我的短链', icon: LayoutDashboard }] : []),
     isSuperAdmin
       ? { to: '/dashboard/domains', label: '域名管理', desc: '配置短链域名', icon: Globe }

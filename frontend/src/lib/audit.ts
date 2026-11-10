@@ -15,7 +15,6 @@ export const ACTION_LABELS: Record<string, string> = {
   batch_import_links: '批量导入短链',
   approve_link: '通过审核',
   reject_link: '驳回审核',
-  toggle_display: '首页展示',
   create_user: '创建用户',
   update_user: '更新用户',
   delete_user: '删除用户',
@@ -76,7 +75,6 @@ const DETAIL_KEY_LABELS: Record<string, string> = {
   password: '密码',
   new_password: '新密码',
   old_password: '旧密码',
-  force_https: '强制 HTTPS',
   site_name: '站点名称',
   turnstile_site_key: 'Turnstile Site Key',
 }
