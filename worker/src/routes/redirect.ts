@@ -76,55 +76,68 @@ interface ShortLinkRow {
   domain_name: string | null;
 }
 
-/** 按短码查询候选短链（只取跳转所需字段） */
-async function queryCandidates(db: D1Database, code: string): Promise<ShortLinkRow[]> {
-  const rows = await db
+/**
+ * 按短码 + 访问域名查询短链（只取跳转所需字段）。
+ * 严格等值匹配：域名已登记时为该域名下的记录，域名未登记时为无域名归属（domain_id 为 NULL）的记录。
+ * 两种情况互不串通，绝不会返回其他域名下的短链。
+ */
+async function queryLinkForHost(
+  db: D1Database,
+  code: string,
+  host: string
+): Promise<ShortLinkRow | null> {
+  const row = await db
     .prepare(
       `SELECT sl.id, sl.short_code, sl.target_url, sl.status, sl.redirect_type, sl.password,
               sl.expires_at, sl.review_status, sl.review_note, sl.domain_id, d.domain as domain_name
        FROM short_links sl
        LEFT JOIN domains d ON sl.domain_id = d.id
        WHERE sl.short_code = ?
-       LIMIT 10`
+         AND COALESCE(sl.domain_id, 0) = COALESCE((SELECT id FROM domains WHERE domain = ? LIMIT 1), 0)
+       LIMIT 1`
     )
-    .bind(code)
-    .all<ShortLinkRow>();
-  return rows.results;
+    .bind(code, host)
+    .first<ShortLinkRow>();
+  return row;
 }
 
 type WaitUntilCtx = { waitUntil(promise: Promise<unknown>): void };
 
-/** 读取候选短链：优先走 KV 缓存，未命中再查 D1 并异步回填 */
-async function loadCandidates(
+/** 读取某短码在指定访问域名下的解析结果：优先走 KV 缓存，未命中再查 D1 并异步回填 */
+async function loadLink(
   env: Env,
   code: string,
+  host: string,
   ctx?: WaitUntilCtx
-): Promise<ShortLinkRow[]> {
-  const key = linkCacheKey(code);
+): Promise<ShortLinkRow | null> {
+  const key = linkCacheKey(code, host);
   try {
     const cached = (await env.KV.get(key, { type: 'json', cacheTtl: LINK_CACHE_EDGE_TTL })) as
-      | ShortLinkRow[]
+      | ShortLinkRow
       | null;
-    if (Array.isArray(cached) && cached.length > 0) return cached;
+    if (cached) return cached;
   } catch {
     // 缓存异常时回退数据库
   }
 
-  const list = await queryCandidates(env.DB, code);
+  const row = await queryLinkForHost(env.DB, code, host);
   // 不缓存空结果，避免新建短链后短时间内仍然 404
-  if (list.length > 0) {
-    const write = env.KV.put(key, JSON.stringify(list), { expirationTtl: LINK_CACHE_TTL }).catch(
+  if (row) {
+    const write = env.KV.put(key, JSON.stringify(row), { expirationTtl: LINK_CACHE_TTL }).catch(
       () => undefined
     );
     if (ctx) ctx.waitUntil(write);
     else await write;
   }
-  return list;
+  return row;
 }
 
 /**
- * 按短码解析短链：别名在不同域名下相互独立，
- * 优先匹配当前访问域名下的短链，其次是无域名归属的短链。
+ * 按短码解析短链：别名在不同域名下严格隔离。
+ * 缓存与查询都以「访问域名」为维度：
+ * - 访问域名已登记：只查该域名下的短链，查不到即 404；
+ * - 访问域名未登记：只查无域名归属（domain_id 为 NULL）的短链。
+ * 两种情况互不串通，因此 s.b.com/1 不可能命中 s.a.com/1 的记录。
  */
 async function resolveLinkByCode(
   env: Env,
@@ -132,18 +145,9 @@ async function resolveLinkByCode(
   host: string,
   ctx?: WaitUntilCtx
 ): Promise<ShortLinkRow | null> {
-  const list = await loadCandidates(env, code, ctx);
-  if (list.length === 0) return null;
-
   const target = normalizeHost(host);
-  const hostMatched = list.find((l) => l.domain_name && normalizeHost(l.domain_name) === target);
-  if (hostMatched) return hostMatched;
-
-  const noDomain = list.find((l) => !l.domain_id);
-  if (noDomain) return noDomain;
-
-  // 兼容历史数据：全局唯一时只可能存在一条
-  return list.length === 1 ? list[0] : null;
+  if (!target) return null;
+  return loadLink(env, code, target, ctx);
 }
 
 /** 密码访问页面（替代原来的 JSON 响应），短链编码由页面脚本从 location 中读取 */
