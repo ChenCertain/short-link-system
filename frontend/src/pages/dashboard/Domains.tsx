@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CheckCircle2, Copy, Globe, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
+import { CheckCircle2, Copy, Globe, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { domainsApi } from '@/lib/api'
 import type { Domain } from '@/lib/types'
 import {
@@ -41,6 +41,11 @@ export default function Domains() {
   const [dnsInfo, setDnsInfo] = useState<{ domain: string; target: string; hosted?: boolean } | null>(null)
   // 本实例 Worker 的 workers.dev 域名，作为 CNAME 目标自动展示
   const [workerHost, setWorkerHost] = useState('')
+
+  // 编辑域名类型（短链域名 / 管理域名 / 通用域名）
+  const [editingDomain, setEditingDomain] = useState<Domain | null>(null)
+  const [editType, setEditType] = useState<'short_link' | 'admin' | 'both'>('both')
+  const [editSaving, setEditSaving] = useState(false)
 
   // 删除确认
   const [deleting, setDeleting] = useState<Domain | null>(null)
@@ -130,6 +135,22 @@ export default function Domains() {
     }
   }
 
+  const handleSaveDomainType = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingDomain) return
+    setEditSaving(true)
+    try {
+      await domainsApi.update(editingDomain.id, { type: editType })
+      show('域名类型已更新', 'success')
+      setEditingDomain(null)
+      void load()
+    } catch (err) {
+      show((err as Error).message, 'error')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
   const handleDelete = async () => {
     if (!deleting) return
     setDeleteLoading(true)
@@ -208,11 +229,21 @@ export default function Domains() {
                       验证
                     </Button>
                   )}
-                  {d.status === 'active' && (
+                  {d.status !== 'pending_verification' && (
                     <Button variant="ghost" size="sm" onClick={() => handleToggleStatus(d)}>
                       {d.status === 'active' ? '停用' : '启用'}
                     </Button>
                   )}
+                  <button
+                    onClick={() => {
+                      setEditingDomain(d)
+                      setEditType((d.type as 'short_link' | 'admin' | 'both') || 'both')
+                    }}
+                    className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
+                    title="修改域名类型"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
                   {d.is_default_short_link !== 1 && (
                     <button
                       onClick={() => handleSetDefault(d)}
@@ -235,6 +266,42 @@ export default function Domains() {
           </ul>
         )}
       </Card>
+
+      {/* 编辑域名类型 */}
+      <Modal
+        open={!!editingDomain}
+        onClose={() => setEditingDomain(null)}
+        title="编辑域名"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setEditingDomain(null)}>
+              取消
+            </Button>
+            <Button onClick={handleSaveDomainType} loading={editSaving}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={handleSaveDomainType} className="space-y-4">
+          <div className="rounded-lg bg-gray-50 px-4 py-3 dark:bg-gray-800/60">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{editingDomain?.domain}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">域名本身不可修改，可调整其用途类型</p>
+          </div>
+          <div>
+            <Label htmlFor="d-edit-type">域名类型</Label>
+            <Select
+              id="d-edit-type"
+              value={editType}
+              onChange={(e) => setEditType(e.target.value as 'short_link' | 'admin' | 'both')}
+            >
+              <option value="short_link">短链域名（仅用于生成短链）</option>
+              <option value="admin">管理域名（仅用于访问管理后台）</option>
+              <option value="both">通用域名（两者皆可）</option>
+            </Select>
+          </div>
+        </form>
+      </Modal>
 
       {/* 添加域名 */}
       <Modal
