@@ -409,10 +409,14 @@ links.post('/', authMiddleware, async (c) => {
   let shortCode = aliasInput || generateShortCode(6);
 
   // 检查短码冲突（同一域名内唯一；不同域名互不影响）
+  let aliasConflict = await findAliasConflict(c.env.DB, shortCode, body.domain_id ?? null);
   let attempts = 0;
-  while (attempts < 10) {
-    const existing = await findAliasConflict(c.env.DB, shortCode, body.domain_id ?? null);
-    if (!existing) break;
+  while (aliasConflict && !body.custom_alias && attempts < 10) {
+    shortCode = generateShortCode(6);
+    aliasConflict = await findAliasConflict(c.env.DB, shortCode, body.domain_id ?? null);
+    attempts++;
+  }
+  if (aliasConflict) {
     if (body.custom_alias) {
       const domainName = body.domain_id ? await getDomainName(c.env.DB, body.domain_id) : '';
       return jsonResponse(
@@ -420,8 +424,7 @@ links.post('/', authMiddleware, async (c) => {
         400
       );
     }
-    shortCode = generateShortCode(6);
-    attempts++;
+    return jsonResponse({ error: '短码生成失败，请重试' }, 500);
   }
 
   // 密码保护
@@ -637,29 +640,31 @@ links.put('/:id', authMiddleware, async (c) => {
   const updates: string[] = [];
   const params: (string | number | null)[] = [];
 
-  // 修改别名（短码）：格式校验 + 同一域名内唯一性检查
+  // 修改别名（短码）：格式校验
+  const targetAlias = body.short_code !== undefined ? body.short_code.trim() : link.short_code;
   if (body.short_code !== undefined) {
-    const alias = body.short_code.trim();
-    if (!alias) {
+    if (!targetAlias) {
       return jsonResponse({ error: '自定义别名不能为空' }, 400);
     }
-    const aliasError = validateAlias(alias);
+    const aliasError = validateAlias(targetAlias);
     if (aliasError) {
       return jsonResponse({ error: aliasError }, 400);
     }
-    if (alias !== link.short_code || targetDomainId !== link.domain_id) {
-      const conflict = await findAliasConflict(c.env.DB, alias, targetDomainId, linkId);
-      if (conflict) {
-        const domainName = targetDomainId ? await getDomainName(c.env.DB, targetDomainId) : '';
-        return jsonResponse(
-          { error: domainName ? `该别名已被域名 ${domainName} 下的短链使用` : '该自定义别名已被使用' },
-          400
-        );
-      }
+    if (targetAlias !== link.short_code) {
+      updates.push('short_code = ?'); params.push(targetAlias);
+      updates.push('custom_alias = ?'); params.push(targetAlias);
     }
-    if (alias !== link.short_code) {
-      updates.push('short_code = ?'); params.push(alias);
-      updates.push('custom_alias = ?'); params.push(alias);
+  }
+
+  // 别名或所属域名任一变化，都要检查目标域名内是否已被占用
+  if (targetAlias !== link.short_code || targetDomainId !== link.domain_id) {
+    const conflict = await findAliasConflict(c.env.DB, targetAlias, targetDomainId, linkId);
+    if (conflict) {
+      const domainName = targetDomainId ? await getDomainName(c.env.DB, targetDomainId) : '';
+      return jsonResponse(
+        { error: domainName ? `该别名已被域名 ${domainName} 下的短链使用` : '该自定义别名已被使用' },
+        400
+      );
     }
   }
 
@@ -833,19 +838,30 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
     }
 
     let shortCode = aliasInput || generateShortCode(6);
-    const existing = await findAliasConflict(c.env.DB, shortCode, defaultDomain?.id || null);
-    if (existing) {
-      if (aliasInput) {
-        results.push({ success: false, error: '别名已存在', target_url: item.target_url });
-        continue;
-      }
+    let conflict = await findAliasConflict(c.env.DB, shortCode, defaultDomain?.id || null);
+    for (let attempt = 0; attempt < 10 && conflict && !aliasInput; attempt++) {
       shortCode = generateShortCode(6);
+      conflict = await findAliasConflict(c.env.DB, shortCode, defaultDomain?.id || null);
+    }
+    if (conflict) {
+      results.push({
+        success: false,
+        error: aliasInput ? '别名已存在' : '短码生成冲突，请重试',
+        target_url: item.target_url,
+      });
+      continue;
     }
 
-    await c.env.DB.prepare(
-      `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, created_by, domain_id)
-       VALUES (?, ?, ?, ?, 'active', 302, ?, ?)`
-    ).bind(shortCode, item.target_url, item.name || '', aliasInput || null, currentUser.user_id, defaultDomain?.id || null).run();
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, created_by, domain_id)
+         VALUES (?, ?, ?, ?, 'active', 302, ?, ?)`
+      ).bind(shortCode, item.target_url, item.name || '', aliasInput || null, currentUser.user_id, defaultDomain?.id || null).run();
+    } catch {
+      // 并发下仍可能撞唯一索引，单条失败不影响整批
+      results.push({ success: false, error: '该别名已被占用', target_url: item.target_url });
+      continue;
+    }
 
     results.push({ success: true, short_code: shortCode, target_url: item.target_url });
   }
