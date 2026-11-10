@@ -131,6 +131,12 @@ export default function Groups() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
+  // 编辑项目组名称 / 描述（超管或该组管理员）
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState({ name: '', description: '' })
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState('')
+
   // 组内短链详情/编辑
   const [editingLink, setEditingLink] = useState<ShortLink | null>(null)
 
@@ -246,6 +252,39 @@ export default function Groups() {
       setCreateError((err as Error).message)
     } finally {
       setCreating(false)
+    }
+  }
+
+  // 打开「编辑项目组信息」弹窗
+  const openEditModal = () => {
+    if (!detail) return
+    setEditForm({ name: detail.group.name, description: detail.group.description || '' })
+    setEditError('')
+    setEditOpen(true)
+  }
+
+  const handleSaveGroupInfo = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!detail) return
+    setEditError('')
+    if (!editForm.name.trim()) {
+      setEditError('请填写项目组名称')
+      return
+    }
+    setSavingEdit(true)
+    try {
+      await groupsApi.update(detail.group.id, {
+        name: editForm.name.trim(),
+        description: editForm.description.trim(),
+      })
+      show('项目组信息已更新', 'success')
+      setEditOpen(false)
+      await loadDetail(detail.group.id)
+      await loadGroups()
+    } catch (err) {
+      setEditError((err as Error).message)
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -528,6 +567,13 @@ export default function Groups() {
                   description={detail.group.description || '暂无描述'}
                   action={
                     <div className="flex flex-wrap gap-2">
+                      {/* 超级管理员与项目组（含父组）管理员均可编辑组名称/描述 */}
+                      {(isSuperAdmin || canManageSelected) && (
+                        <Button variant="outline" size="sm" onClick={openEditModal}>
+                          <Pencil className="h-4 w-4" />
+                          编辑
+                        </Button>
+                      )}
                       {/* 超级管理员与项目组（含父组）管理员均可添加成员 */}
                       {(isSuperAdmin || canManageMembers) && (
                         <Button variant="outline" size="sm" onClick={openMemberModal}>
@@ -908,7 +954,47 @@ export default function Groups() {
         </form>
       </Modal>
 
-      {/* 添加成员（仅超管） */}
+      {/* 编辑项目组信息 */}
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="编辑项目组"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSaveGroupInfo} loading={savingEdit}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={handleSaveGroupInfo} className="space-y-4">
+          <div>
+            <Label htmlFor="g-edit-name">项目组名称 *</Label>
+            <Input
+              id="g-edit-name"
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              placeholder="如：市场部"
+            />
+          </div>
+          <div>
+            <Label htmlFor="g-edit-desc">描述</Label>
+            <Textarea
+              id="g-edit-desc"
+              rows={3}
+              value={editForm.description}
+              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              placeholder="项目组用途说明（可选）"
+            />
+          </div>
+          {editError && <ErrorText>{editError}</ErrorText>}
+        </form>
+      </Modal>
+
+      {/* 添加成员（超管或该组/父组管理员） */}
       <Modal
         open={memberOpen}
         onClose={() => setMemberOpen(false)}

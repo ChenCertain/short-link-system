@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
 import { jsonResponse } from '../utils';
-import { authMiddleware, requireRole, logAudit } from '../middleware';
+import { authMiddleware, logAudit } from '../middleware';
 import {
   isGroupAdminOf,
   isDirectGroupAdminOf,
@@ -410,11 +410,12 @@ groups.post('/', async (c) => {
   return jsonResponse({ success: true, id: groupId }, 201);
 });
 
-// ========== 更新项目组（仅超级管理员） ==========
-groups.put('/:id', requireRole('super_admin'), async (c) => {
+// ========== 更新项目组信息（超级管理员，或该组的管理员，含父组管理员） ==========
+groups.put('/:id', async (c) => {
   const groupId = parseInt(c.req.param('id'));
   if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组 ID' }, 400);
   const currentUser = c.get('user');
+  const isSuperAdmin = currentUser.role === 'super_admin';
   const body = await c.req.json<{ name?: string; description?: string }>();
 
   const group = await c.env.DB.prepare('SELECT id FROM project_groups WHERE id = ?').bind(groupId).first();
@@ -422,11 +423,20 @@ groups.put('/:id', requireRole('super_admin'), async (c) => {
     return jsonResponse({ error: '项目组不存在' }, 404);
   }
 
+  if (!isSuperAdmin && !(await isGroupAdminOf(c.env.DB, currentUser.user_id, groupId))) {
+    return jsonResponse({ error: '只能修改自己管理的项目组' }, 403);
+  }
+
+  const name = body.name === undefined ? undefined : String(body.name).trim();
+  if (name !== undefined && !name) {
+    return jsonResponse({ error: '请填写项目组名称' }, 400);
+  }
+
   const updates: string[] = [];
   const params: (string | number)[] = [];
 
-  if (body.name) { updates.push('name = ?'); params.push(body.name); }
-  if (body.description !== undefined) { updates.push('description = ?'); params.push(body.description); }
+  if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+  if (body.description !== undefined) { updates.push('description = ?'); params.push(String(body.description)); }
 
   if (updates.length === 0) {
     return jsonResponse({ error: '没有需要更新的字段' }, 400);
