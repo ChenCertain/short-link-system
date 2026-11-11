@@ -307,12 +307,10 @@ auth.post('/send-code', async (c) => {
 
   // 发送邮件
   const { sendVerificationEmail, isSmtpConfigured } = await import('../services/email');
-  const sent = await sendVerificationEmail(
-    email,
-    code,
-    c.env,
-    purpose === 'set_password' ? '短链接管理系统 - 设置登录密码' : undefined
-  );
+  const verifyPurpose = purpose === 'set_password' ? 'set_password'
+    : purpose === 'init_admin' ? 'init_admin'
+      : 'login';
+  const sent = await sendVerificationEmail(email, code, c.env, verifyPurpose);
   if (!sent) {
     return jsonResponse({ error: '邮件发送失败，请稍后重试' }, 500);
   }

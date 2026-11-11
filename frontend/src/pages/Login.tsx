@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowLeft, KeyRound, Mail, ShieldCheck } from 'lucide-react'
 import { ApiError, authApi } from '@/lib/api'
@@ -452,7 +452,7 @@ export default function Login() {
           <span className="block">作者：{AUTHOR_NAME}</span>
           {copyrightText()}
           <span className="mt-1 block">
-            源代码：<SourceLink />
+            <SourceLink />
           </span>
         </p>
       </div>

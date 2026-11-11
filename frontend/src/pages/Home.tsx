@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AUTHOR_NAME, copyrightText } from '@/lib/brand'
 import { SourceLink } from '@/components/SourceLink'
@@ -303,7 +303,7 @@ export default function Home() {
           <p className="text-xs leading-5 text-gray-400">
             作者：{AUTHOR_NAME} · {copyrightText()}
             <span className="mt-1 block">
-              源代码：<SourceLink />
+              <SourceLink />
             </span>
           </p>
         </div>

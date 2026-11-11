@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Rocket, ShieldCheck } from 'lucide-react'
 import { authApi } from '@/lib/api'
@@ -225,7 +225,7 @@ export default function InitAdmin() {
           <span className="block">作者：{AUTHOR_NAME}</span>
           {copyrightText()}
           <span className="mt-1 block">
-            源代码：<SourceLink />
+            <SourceLink />
           </span>
         </p>
       </div>

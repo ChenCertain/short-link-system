@@ -217,7 +217,7 @@ profile.post('/email-code', async (c) => {
 
   await c.env.KV.put(rateKey, '1', { expirationTtl: 60 });
 
-  const sent = await sendVerificationEmail(email, code, c.env, '短链接管理系统 - 更换邮箱验证码');
+  const sent = await sendVerificationEmail(email, code, c.env, 'change_email');
   if (!sent) {
     return jsonResponse({ error: '邮件发送失败，请稍后重试' }, 500);
   }

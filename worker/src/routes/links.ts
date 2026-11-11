@@ -9,6 +9,7 @@ import {
   validateAlias,
   isSafeHttpUrl,
   parseIntClamped,
+  normalizeHost,
 } from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
 import { invalidateLinkCache } from '../cache';
@@ -44,6 +45,20 @@ async function getDefaultRedirectType(db: D1Database): Promise<number> {
     return row?.value === '301' ? 301 : 302;
   } catch {
     return 302;
+  }
+}
+
+/**
+ * 站点管理后台的访问地址（用于邮件里的「前往审核」按钮）：
+ * 优先用当前请求的来源，便于多实例部署时指向正确站点。
+ */
+function getSiteOrigin(env: Env, request: Request): string {
+  try {
+    const url = new URL(request.url);
+    return url.origin;
+  } catch {
+    const host = normalizeHost(env.PAGES_DOMAIN || '');
+    return host ? `https://${host}` : '';
   }
 }
 
@@ -292,8 +307,8 @@ links.post('/:id/review', authMiddleware, async (c) => {
   const body = await c.req.json<{ approved: boolean; note?: string }>();
 
   const link = await c.env.DB.prepare(
-    'SELECT id, short_code, name, target_url, created_by, group_id, review_status, review_group_id FROM short_links WHERE id = ?'
-  ).bind(linkId).first<{ id: number; short_code: string; name: string; created_by: number; group_id: number | null; review_status: string; review_group_id: number | null }>();
+    'SELECT id, short_code, name, target_url, created_by, group_id, domain_id, review_status, review_group_id FROM short_links WHERE id = ?'
+  ).bind(linkId).first<{ id: number; short_code: string; name: string; target_url: string; created_by: number; group_id: number | null; domain_id: number | null; review_status: string; review_group_id: number | null }>();
 
   if (!link) {
     return jsonResponse({ error: '短链不存在' }, 404);
@@ -334,8 +349,31 @@ links.post('/:id/review', authMiddleware, async (c) => {
     .first<{ email: string }>();
   if (creator?.email) {
     const { sendReviewResultEmail } = await import('../services/email');
+    // 通过时附带短链完整地址，方便直接复制使用
+    const domainRow = link.domain_id
+      ? await c.env.DB.prepare('SELECT domain FROM domains WHERE id = ?')
+        .bind(link.domain_id)
+        .first<{ domain: string }>()
+      : null;
+    const shortUrl = domainRow?.domain
+      ? `https://${domainRow.domain}/${link.short_code}`
+      : getSiteOrigin(c.env, c.req.raw) + `/${link.short_code}`;
+    // 审核人信息（姓名 + 邮箱），展示在结果邮件里便于追溯
+    const reviewer = await c.env.DB.prepare('SELECT name, email FROM users WHERE id = ?')
+      .bind(currentUser.user_id)
+      .first<{ name: string; email: string }>();
     c.executionCtx.waitUntil(
-      sendReviewResultEmail(creator.email, { approved, linkName: link.name, shortCode: link.short_code, note }, c.env)
+      sendReviewResultEmail(creator.email, {
+        approved,
+        linkName: link.name,
+        shortCode: link.short_code,
+        note,
+        shortUrl,
+        targetUrl: link.target_url,
+        reviewerName: reviewer?.name || null,
+        reviewerEmail: reviewer?.email || currentUser.email,
+        reviewedAt: now,
+      }, c.env)
     );
   }
 
@@ -562,6 +600,7 @@ links.post('/', authMiddleware, async (c) => {
         linkName: body.name || '',
         shortCode,
         targetUrl: body.target_url,
+        reviewUrl: `${getSiteOrigin(c.env, c.req.raw)}/dashboard/review`,
       };
       c.executionCtx.waitUntil(
         Promise.all(recipients.map((email) => sendReviewRequestEmail(email, payload, c.env)))
@@ -890,6 +929,7 @@ links.put('/:id', authMiddleware, async (c) => {
                   linkName: detail.name || '',
                   shortCode: detail.short_code,
                   targetUrl: detail.target_url,
+                  reviewUrl: `${getSiteOrigin(c.env, c.req.raw)}/dashboard/review`,
                 },
                 c.env
               )

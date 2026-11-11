@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AUTHOR_NAME, copyrightText } from '@/lib/brand'
 import { SourceLink } from '@/components/SourceLink'
@@ -194,7 +194,7 @@ export default function Layout() {
           <p>作者：{AUTHOR_NAME}</p>
           <p>{copyrightText()}</p>
           <p>
-            源代码：<SourceLink />
+            <SourceLink />
           </p>
         </footer>
       </div>
