@@ -30,7 +30,7 @@
 | 数据库 | Cloudflare D1 |
 | 缓存 | Cloudflare KV |
 | 人机验证 | Cloudflare Turnstile |
-| 邮件 | 飞书 SMTP |
+| 邮件 | 任意 SMTP 服务商（推荐 SSL 465） |
 
 ## 权限模型
 
@@ -96,11 +96,25 @@ npm install
 
 ### 2. 配置
 
-单实例：直接编辑 `worker/wrangler.toml`，至少填入 D1 数据库 ID、KV 命名空间 ID 与自己的发信邮箱；Turnstile Site Key 与访问域名可留空，之后再补。
+配置分两类，**位置不同，不要混用**：
 
-多实例 / Git 自动构建：仓库内配置保持留空，在每个 Cloudflare 项目里配置构建变量 `D1_DATABASE_ID`、`KV_NAMESPACE_ID`（必填），构建时执行 `npm run build:config` 生成本次实例专属配置，互不覆盖。`TURNSTILE_SITE_KEY`、`PAGES_DOMAIN`、`SMTP_*` 均可留空，Turnstile 留空时自动关闭人机验证。
+**① 构建期配置（会写进部署配置）**
 
-敏感信息（`JWT_SECRET`、`SMTP_PASS`）通过 Cloudflare Secret 配置；`TURNSTILE_SECRET_KEY` 仅在启用 Turnstile 时必填。详见 [部署指南](./DEPLOY.md)。
+只有 D1 数据库 ID 与 KV 命名空间 ID。使用 Git 自动构建时，在 Cloudflare 项目的**构建变量**里配置
+`D1_DATABASE_ID`、`KV_NAMESPACE_ID`（必填），构建时由 `npm run build:config` 生成本实例专属配置；
+本地手动部署则直接编辑 `worker/wrangler.toml`。
+
+**② 运行时配置（不写入仓库）**
+
+`TURNSTILE_SITE_KEY`、`TURNSTILE_SECRET_KEY`、`SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_FROM`、
+`SMTP_PASS`、`JWT_SECRET`、`PAGES_DOMAIN`、`WORKER_HOST` 等，统一在
+**Worker → 设置 → 变量和密钥（Variables and Secrets）** 中维护，敏感项选「密钥」类型。
+
+> ⚠️ **不要把这些变量写进 `wrangler.toml` 的 `[vars]`**。
+> `wrangler deploy` 会用配置文件里的 `[vars]` 整体替换线上变量表，写成空值会清空线上已有配置。
+> 因此本仓库的 `wrangler.toml` 不含 `[vars]` 段，`gen-wrangler.mjs` 检测到该段会直接让构建失败。
+
+本地开发时把变量写在 `worker/.dev.vars`（已被 `.gitignore` 忽略）。详见 [部署指南](./DEPLOY.md)。
 
 ### 3. 数据库迁移
 
@@ -125,20 +139,22 @@ npm run dev:frontend   # 终端 2：前端（http://localhost:5173，已代理 /
 npm run build    # 构建前端 + 打包 Worker（本地自检用）
 ```
 
-> 上线统一通过 **git push** 触发 Cloudflare 自动构建部署，不要在本地手动 `wrangler deploy`。
-
-完整流程见 [部署指南](./DEPLOY.md)。
+部署方式二选一：**Git 自动构建**（push 后由 Cloudflare 构建并部署，见 [部署指南](./DEPLOY.md)），
+或本地手动 `wrangler deploy`。手动部署前记得先把运行时变量配置到 Worker，详见下方「环境变量」。
 
 ## 环境变量
+
+以下运行时变量统一在 **Cloudflare：Worker → 设置 → 变量和密钥** 中配置（本地开发写 `worker/.dev.vars`），
+**不要写进 `wrangler.toml`**，否则部署时会覆盖线上配置。
 
 | 变量 | 说明 |
 |------|------|
 | `DB` | D1 数据库绑定 |
 | `KV` | KV 命名空间绑定 |
-| `JWT_SECRET` | JWT 签名密钥（Secret） |
-| `TURNSTILE_SITE_KEY` | Turnstile 站点密钥（可留空，留空即关闭人机验证） |
+| `JWT_SECRET` | JWT 签名密钥（密钥类型，必填） |
+| `TURNSTILE_SITE_KEY` | Turnstile 站点密钥（公开值；与 Secret Key 需**成对配置**，只配 Secret 会导致后端要求验证而前端不渲染） |
 | `TURNSTILE_SECRET_KEY` | Turnstile 密钥（Secret，启用时必填） |
-| `SMTP_HOST` / `SMTP_PORT` | SMTP 地址与端口（默认 `smtp.feishu.cn` / `465`） |
+| `SMTP_HOST` / `SMTP_PORT` | SMTP 地址与端口（推荐 465 SSL 直连，587 走 STARTTLS 兼容性较差） |
 | `SMTP_USER` / `SMTP_PASS` | SMTP 账号与密码（`SMTP_PASS` 为 Secret；仓库中账号默认留空） |
 | `SMTP_FROM` | 发件人地址，留空时回退为 `SMTP_USER` |
 | `PAGES_DOMAIN` | 本实例访问域名（用于短链地址展示与 DNS 指引） |
@@ -148,16 +164,12 @@ npm run build    # 构建前端 + 打包 Worker（本地自检用）
 
 > 本地开发可把敏感变量写入 `worker/.dev.vars`，该文件已被 `.gitignore` 忽略。
 
-### 自定义署名与站点名
-
-页脚、首页的作者与版权信息集中在 `frontend/src/lib/brand.ts`，改成自己的名字或团队名即可（不必全局搜索替换）；站点名称在管理后台「系统设置」中修改。
-
 ## 安全提示
 
 - 本仓库只包含代码，**不含任何数据库、日志、邮箱或密钥**；`worker/.dev.vars`、`worker/wrangler.build.toml`、`.wrangler/`、`frontend/dist/` 均已被 `.gitignore` 忽略，请勿提交。
 - `JWT_SECRET`、`SMTP_PASS`、`TURNSTILE_SECRET_KEY` 通过 Cloudflare Secret 配置，不要写进 `wrangler.toml` 或源码。
 - 未配置 SMTP 时接口不会返回验证码（只有 `localhost` 本地调试会自动填充），线上请先配好邮箱，否则无法登录或初始化管理员。
-- 登录相关接口内置 **IP 维度限流**（计数存于 D1 `rate_limits` 表，迁移 0011）：同一 IP 15 分钟内累计 10 次「登录 / 设置密码 / 初始化」验证失败，或 10 分钟内发送 20 次验证码后，返回 429 并提示剩余等待秒数；成功登录会清零失败计数。阈值可用上表的 `RATE_LIMIT_*` 变量调整。限流按 IP 计数，不会因他人恶意尝试而锁死某个账户。
+- 登录相关接口内置 **IP 维度限流**：同一 IP 在窗口期内失败次数或发码次数超限时返回 429，成功登录会清零失败计数。阈值见上表 `RATE_LIMIT_*` 变量。限流按 IP 计数，不会因他人恶意尝试而锁死某个账户。
 - 发现安全问题请通过 Issue 反馈，避免直接公开可复现的利用细节。
 
 ## 参与贡献
@@ -171,7 +183,5 @@ npm run build    # 构建前端 + 打包 Worker（本地自检用）
 本项目采用 [GNU Affero General Public License v3.0 或更高版本（AGPL-3.0-or-later）](./LICENSE) 许可。
 
 允许商业使用、修改与分发；分发修改版本时必须保留许可证、版权和原始项目署名。若将修改版作为网络服务提供，也必须向该服务的用户提供对应源代码。详细署名要求见 [NOTICE](./NOTICE)，补充条款见 [ADDITIONAL_TERMS.md](./ADDITIONAL_TERMS.md)。
-
-为满足 AGPL 第 13 条，各页面页脚常驻「源代码」入口（地址定义在 `frontend/src/lib/brand.ts` 的 `SOURCE_URL`）。部署修改版时请将其改为你实际运行的源码地址，不要直接删除。
 
 项目名称与 Logo 不随本许可证授权，详见 [TRADEMARKS.md](./TRADEMARKS.md)。

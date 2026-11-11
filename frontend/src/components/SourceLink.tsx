@@ -3,9 +3,7 @@ import { SOURCE_URL } from '@/lib/brand'
 /**
  * 源码入口（GitHub 仓库）
  *
- * AGPL-3.0-or-later 第 13 条：以网络服务方式让远程用户与本程序交互时，
- * 必须向这些用户提供获取对应源码的途径。该链接因此常驻在各页面页脚，
- * 任何修改版都应保留或替换为自己实际运行的源码地址，而不是直接删除。
+ * 页脚常驻的仓库链接，地址见 `@/lib/brand` 的 `SOURCE_URL`。
  */
 export function SourceLink() {
   return (

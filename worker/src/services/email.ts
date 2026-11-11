@@ -1,6 +1,6 @@
 // 邮件发送服务
-// Cloudflare Workers 通过 TCP Sockets API 直连 SMTP 服务器（支持 SSL 465）
-// 若需使用 587 STARTTLS，请改用第三方 HTTP 邮件 API
+// Cloudflare Workers 通过 TCP Sockets API 直连 SMTP 服务器：
+// 端口 465 使用 SSL 直连（推荐），其他端口（如 587）自动切换为 STARTTLS。
 
 import { connect } from 'cloudflare:sockets';
 import type { Env } from '../types';
