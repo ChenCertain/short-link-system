@@ -7,6 +7,54 @@
 基于 **Cloudflare Workers（前端静态资源 + API + 短链跳转）+ D1 + KV** 的短链管理系统。
 单个 Worker 即可承载整站，仓库中只有代码，不含任何用户与短链数据，每个实例使用独立的 D1 / KV。
 
+**无需服务器、无需运维**：部署到 Cloudflare 边缘网络，跳转延迟毫秒级，免费额度即可跑通完整功能。
+
+![首页](docs/screenshots/home.jpg)
+
+## 界面预览
+
+> 截图取自本地演示实例，数据均为 `example.com` 示例内容。
+
+**概览** — 核心指标与访问趋势
+
+![概览](docs/screenshots/dashboard.jpg)
+
+**短链管理** — 筛选、状态与快捷操作
+
+![短链管理](docs/screenshots/links.jpg)
+
+**指标统计** — 地区分布与排行
+
+![指标统计](docs/screenshots/stats.jpg)
+
+**项目组** — 成员与组内短链
+
+![项目组](docs/screenshots/groups.jpg)
+
+**成员管理** — 组内权限配置
+
+![成员管理](docs/screenshots/members.jpg)
+
+**用户管理** — 全局用户与角色
+
+![用户管理](docs/screenshots/users.jpg)
+
+**短链审核** — 待审列表与审批
+
+![短链审核](docs/screenshots/review.jpg)
+
+**域名管理** — 多域名与 DNS 验证
+
+![域名管理](docs/screenshots/domains.jpg)
+
+**操作审计** — 操作留痕与 IP
+
+![操作审计](docs/screenshots/audit.jpg)
+
+**系统设置** — 站点信息与跳转策略
+
+![系统设置](docs/screenshots/settings.jpg)
+
 ## 特性
 
 - **三级权限模型**：超级管理员 / 项目组管理员 / 普通用户
@@ -83,6 +131,7 @@
 │   └── wrangler.toml    # 模板配置（仅含占位符，不含密钥）
 ├── migrations/          # D1 数据库迁移（0001 ~ 0011）
 ├── scripts/             # 构建期配置生成脚本（多实例部署）
+├── docs/screenshots/    # README 界面预览图
 └── DEPLOY.md            # 完整部署指南
 ```
 
