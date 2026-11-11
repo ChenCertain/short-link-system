@@ -168,8 +168,9 @@ npm install
 **Worker → 设置 → 变量和密钥（Variables and Secrets）** 中维护，敏感项选「密钥」类型。
 
 > ⚠️ **不要把这些变量写进 `wrangler.toml` 的 `[vars]`**。
-> `wrangler deploy` 会用配置文件里的 `[vars]` 整体替换线上变量表，写成空值会清空线上已有配置。
-> 因此本仓库的 `wrangler.toml` 不含 `[vars]` 段，`gen-wrangler.mjs` 检测到该段会直接让构建失败。
+> `wrangler deploy` 默认用配置文件里的 `[vars]` 整体替换线上变量表：写成空值会清空、不写该段则会删除线上明文变量。
+> 因此本仓库的 `wrangler.toml` 不含 `[vars]` 段，并设置 `keep_vars = true`，让部署保留控制台已配置的变量；
+> `gen-wrangler.mjs` 检测到 `[vars]` 段会直接让构建失败。
 
 本地开发时把变量写在 `worker/.dev.vars`（已被 `.gitignore` 忽略）。详见 [部署指南](./DEPLOY.md)。
 

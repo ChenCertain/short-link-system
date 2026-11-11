@@ -9,6 +9,9 @@
 name = "short-link-system"
 compatibility_date = "2024-09-23"
 main = "src/index.ts"
+# 部署时保留控制台已配置的明文变量（plain_text / json），不用本文件覆盖或删除它们。
+# 运行时变量统一在 Cloudflare「变量和密钥」中维护；本文件不声明 [vars]。
+keep_vars = true
 # 注意：数据库迁移目录在下方 [[d1_databases]] 中通过 migrations_dir 指定
 
 # ============ D1 数据库 ============

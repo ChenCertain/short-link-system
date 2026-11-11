@@ -137,7 +137,8 @@ npx wrangler d1 migrations apply short-link-db --remote --config wrangler.build.
 
 控制台 → **Workers & Pages** → 点你的 Worker → **Settings** → **Variables and Secrets** → **Add**。
 
-这一步的变量**直接作用于运行中的 Worker**，改完点 **Deploy**（或 Save）生效，且**不会被以后的自动构建覆盖**。
+这一步的变量**直接作用于运行中的 Worker**，改完点 **Deploy**（或 Save）生效。
+仓库的 `wrangler.toml` 设置了 `keep_vars = true`，因此以后的自动构建**会保留这些控制台变量，不会覆盖或删除**。
 
 ### ① 密钥（类型选 **Secret / 密钥**）
 
