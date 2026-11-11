@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ChevronDown,
@@ -115,6 +115,17 @@ export default function Groups() {
 
   const [detail, setDetail] = useState<GroupDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  // 详情区容器：移动端选中项目组后滚动到详情，避免「点了没反应」（详情在树卡片下方）
+  const detailRef = useRef<HTMLDivElement>(null)
+
+  const handleSelectGroup = useCallback((id: number) => {
+    setSelectedId(id)
+    if (window.matchMedia('(max-width: 1023px)').matches) {
+      requestAnimationFrame(() => {
+        detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    }
+  }, [])
 
   const [allUsers, setAllUsers] = useState<UserItem[]>([])
 
@@ -538,13 +549,13 @@ export default function Groups() {
           ) : (
             <div className="max-h-56 space-y-0.5 overflow-y-auto pr-1 lg:max-h-none lg:overflow-visible">
               {groups.map((g) => (
-                <GroupNode key={g.id} group={g} selectedId={selectedId} onSelect={setSelectedId} />
+                <GroupNode key={g.id} group={g} selectedId={selectedId} onSelect={handleSelectGroup} />
               ))}
             </div>
           )}
         </Card>
 
-        <div className="space-y-4">
+        <div ref={detailRef} className="scroll-mt-16 space-y-4 lg:scroll-mt-0">
           {detailLoading && <LoadingBlock />}
 
           {!detailLoading && !detail && (
@@ -647,37 +658,45 @@ export default function Groups() {
                   />
                 ) : (
                   <div className="overflow-x-auto overscroll-x-contain">
-                    <table className="w-full min-w-[640px] text-sm">
+                    <table className="w-full text-sm md:min-w-[640px]">
                       <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                         <tr>
-                          <th className="px-5 py-2.5 font-medium">短链 / 名称</th>
-                          <th className="px-4 py-2.5 font-medium">目标链接</th>
-                          <th className="px-4 py-2.5 font-medium">创建人</th>
+                          <th className="px-4 py-2.5 font-medium md:px-5">短链 / 名称</th>
+                          <th className="hidden px-4 py-2.5 font-medium md:table-cell">目标链接</th>
+                          <th className="hidden px-4 py-2.5 font-medium md:table-cell">创建人</th>
                           <th className="px-4 py-2.5 font-medium">状态</th>
-                          <th className="px-5 py-2.5 text-right font-medium">操作</th>
+                          <th className="px-4 py-2.5 text-right font-medium md:px-5">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                         {detail.links.map((l) => (
                           <tr key={l.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                            <td className="px-5 py-3">
+                            <td className="max-w-[180px] px-4 py-3 md:max-w-none md:px-5">
                               {/* 与短链管理一致：点击短码进入详情页 */}
                               <Link
                                 to={`/dashboard/links/${l.id}`}
-                                className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+                                className="block truncate font-medium text-brand-600 hover:underline dark:text-brand-400"
+                                title={l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
                               >
                                 {l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
                               </Link>
                               <p className="truncate text-xs text-gray-500 dark:text-gray-400">
                                 {l.name || '（未命名）'}
                               </p>
+                              {/* 移动端：目标链接与创建人以子行展示（桌面端有独立列） */}
+                              <p className="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500 md:hidden" title={l.target_url}>
+                                {l.target_url}
+                              </p>
+                              <p className="truncate text-xs text-gray-400 dark:text-gray-500 md:hidden">
+                                创建人：{l.creator_name || '-'}
+                              </p>
                             </td>
-                            <td className="max-w-[220px] px-4 py-3">
+                            <td className="hidden max-w-[220px] px-4 py-3 md:table-cell">
                               <span className="block truncate text-gray-600 dark:text-gray-400" title={l.target_url}>
                                 {l.target_url}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                            <td className="hidden px-4 py-3 text-xs text-gray-500 md:table-cell dark:text-gray-400">
                               {l.creator_name || '-'}
                             </td>
                             <td className="px-4 py-3">
@@ -687,7 +706,7 @@ export default function Groups() {
                                 {l.review_status === 'rejected' && <Badge tone="red">未通过</Badge>}
                               </div>
                             </td>
-                            <td className="px-5 py-3 text-right">
+                            <td className="px-4 py-3 text-right md:px-5">
                               <div className="flex items-center justify-end gap-1">
                                 <Link
                                   to={`/dashboard/links/${l.id}`}
@@ -869,7 +888,7 @@ export default function Groups() {
                     {detail.subGroups.map((g) => (
                       <li key={g.id} className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
                         <span className="min-w-0 truncate text-sm text-gray-900 dark:text-gray-100">{g.name}</span>
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedId(g.id)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleSelectGroup(g.id)}>
                           查看
                         </Button>
                       </li>

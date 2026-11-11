@@ -105,11 +105,11 @@ export default function Review() {
           <EmptyState title="当前暂无待审核短链" description="用户提交审核后会显示在这里" />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm md:min-w-[640px]">
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-3 font-medium">短链 / 名称</th>
-                  <th className="px-4 py-3 font-medium">目标链接</th>
+                  <th className="hidden px-4 py-3 font-medium sm:table-cell">目标链接</th>
                   <th className="hidden px-4 py-3 font-medium lg:table-cell">提交人</th>
                   <th className="hidden px-4 py-3 font-medium lg:table-cell">项目组</th>
                   <th className="hidden px-4 py-3 font-medium xl:table-cell">提交时间</th>
@@ -119,11 +119,12 @@ export default function Review() {
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {links.map((link) => (
                   <tr key={link.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                    <td className="px-4 py-3">
+                    <td className="max-w-[200px] px-4 py-3 md:max-w-none">
                       <div className="flex items-center gap-2">
                         <Link
                           to={`/dashboard/links/${link.id}`}
-                          className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+                          className="truncate font-medium text-brand-600 hover:underline dark:text-brand-400"
+                          title={`/${link.short_code}`}
                         >
                           /{link.short_code}
                         </Link>
@@ -132,8 +133,12 @@ export default function Review() {
                       <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
                         {link.name || '（未命名）'}
                       </p>
+                      {/* 移动端：在短链单元格下方补充目标链接 */}
+                      <p className="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500 sm:hidden" title={link.target_url}>
+                        {link.target_url}
+                      </p>
                     </td>
-                    <td className="max-w-[240px] px-4 py-3">
+                    <td className="hidden max-w-[240px] px-4 py-3 sm:table-cell">
                       <a
                         href={link.target_url}
                         target="_blank"

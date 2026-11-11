@@ -478,15 +478,15 @@ export default function Links() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm md:min-w-[720px]">
                 <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                   <tr>
                     <th className="px-4 py-3 font-medium">短链 / 名称</th>
-                    <th className="px-4 py-3 font-medium">目标链接</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">目标链接</th>
                     <th className="px-4 py-3 font-medium">状态</th>
                     <th className="hidden px-4 py-3 font-medium md:table-cell">项目组</th>
                     <th className="hidden px-4 py-3 font-medium lg:table-cell">创建者</th>
-                    <th className="px-4 py-3 font-medium">访问</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">访问</th>
                     <th className="hidden px-4 py-3 font-medium xl:table-cell">创建时间</th>
                     <th className="px-4 py-3 text-right font-medium">操作</th>
                   </tr>
@@ -494,11 +494,12 @@ export default function Links() {
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {links.map((link) => (
                     <tr key={link.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                      <td className="px-4 py-3">
+                      <td className="max-w-[180px] px-4 py-3 md:max-w-none">
                         <div className="flex items-center gap-2">
                           <Link
                             to={`/dashboard/links/${link.id}`}
-                            className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+                            className="truncate font-medium text-brand-600 hover:underline dark:text-brand-400"
+                            title={`/${link.short_code}`}
                           >
                             /{link.short_code}
                           </Link>
@@ -506,8 +507,20 @@ export default function Links() {
                         <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
                           {link.name || '（未命名）'}
                         </p>
+                        {/* 移动端：在短链单元格下方补充目标、访问量与归属组 */}
+                        <p className="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500 sm:hidden" title={link.target_url}>
+                          {link.target_url}
+                        </p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 sm:hidden">
+                          <Badge tone="blue">{link.click_count} 次访问</Badge>
+                          {link.group_id && (
+                            <span className="truncate text-[11px] text-gray-400" title={groupPathMap.get(link.group_id) || link.group_name || ''}>
+                              {groupPathMap.get(link.group_id) || link.group_name || '-'}
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="max-w-[220px] px-4 py-3">
+                      <td className="hidden max-w-[220px] px-4 py-3 sm:table-cell">
                         <a
                           href={link.target_url}
                           target="_blank"
@@ -539,7 +552,7 @@ export default function Links() {
                         <p className="text-gray-700 dark:text-gray-300">{link.creator_name || '-'}</p>
                         <p className="text-xs text-gray-400">{link.creator_email}</p>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <Badge tone="blue">{link.click_count}</Badge>
                       </td>
                       <td className="hidden px-4 py-3 text-xs text-gray-500 dark:text-gray-400 xl:table-cell">

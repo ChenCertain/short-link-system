@@ -492,13 +492,13 @@ export default function Users() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm">
+              <table className="w-full text-sm md:min-w-[720px]">
                 <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                   <tr>
                     <th className="px-4 py-3 font-medium">姓名 / 邮箱</th>
-                    <th className="px-4 py-3 font-medium">角色</th>
-                    <th className="px-4 py-3 font-medium">状态</th>
-                    <th className="px-4 py-3 font-medium">最后登录</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">角色</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">状态</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">最后登录</th>
                     <th className="hidden px-4 py-3 font-medium xl:table-cell">创建时间</th>
                     <th className="px-4 py-3 text-right font-medium">操作</th>
                   </tr>
@@ -513,7 +513,7 @@ export default function Users() {
                       || (u.role === 'super_admin' && !isSuperAdmin)
                     return (
                     <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                      <td className="px-4 py-3">
+                      <td className="max-w-[200px] px-4 py-3 md:max-w-none">
                         <button
                           onClick={() => void openDetail(u)}
                           className="text-left font-medium text-gray-900 hover:text-brand-600 dark:text-gray-100 dark:hover:text-brand-400"
@@ -521,7 +521,7 @@ export default function Users() {
                         >
                           {u.name}
                         </button>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{u.email}</p>
+                        <p className="truncate text-xs text-gray-500 dark:text-gray-400">{u.email}</p>
                         <p className="mt-0.5 text-[11px] text-gray-400">
                           {u.link_count ?? 0} 条短链 · {u.group_count ?? 0} 个项目组
                         </p>
@@ -542,14 +542,40 @@ export default function Users() {
                             )}
                           </div>
                         )}
+                        {/* 移动端：在姓名单元格下方补充角色、状态与最后登录 */}
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:hidden">
+                          <Badge tone={roleTone(u.role)}>{ROLE_LABELS[u.role] || u.role}</Badge>
+                          {isRootUser && <Badge tone="red">最高权限</Badge>}
+                          <StatusBadge status={u.status === 'active' ? 'active' : 'disabled'} />
+                          {u.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
+                          {!!u.require_review && (
+                            <Badge tone="yellow">
+                              {u.review_by === 'super_admin'
+                                ? '超管审核'
+                                : u.review_by === 'parent'
+                                  ? '父组审核'
+                                  : '组内审核'}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500 sm:hidden dark:text-gray-400">
+                          {u.last_login_at ? (
+                            <>
+                              <span>{formatDateTime(u.last_login_at)}</span>
+                              {u.last_login_ip && <span className="ml-1 font-mono text-[11px] text-gray-400">{u.last_login_ip}</span>}
+                            </>
+                          ) : (
+                            <span className="text-gray-400">从未登录</span>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge tone={roleTone(u.role)}>{ROLE_LABELS[u.role] || u.role}</Badge>
                           {isRootUser && <Badge tone="red">最高权限</Badge>}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <StatusBadge status={u.status === 'active' ? 'active' : 'disabled'} />
                           {u.password_set === 0 && <Badge tone="gray">未设密码</Badge>}
@@ -564,7 +590,7 @@ export default function Users() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         {u.last_login_at ? (
                           <>
                             <p className="text-xs text-gray-600 dark:text-gray-300">{formatDateTime(u.last_login_at)}</p>
@@ -1059,32 +1085,37 @@ export default function Users() {
                 ) : (
                   <>
                     <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-                      <table className="w-full min-w-[520px] text-sm">
+                      <table className="w-full text-sm md:min-w-[520px]">
                         <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                           <tr>
                             <th className="px-3 py-2 font-medium">短链</th>
-                            <th className="px-3 py-2 font-medium">目标链接</th>
-                            <th className="px-3 py-2 font-medium">项目组</th>
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">目标链接</th>
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">项目组</th>
                             <th className="px-3 py-2 font-medium">状态</th>
-                            <th className="px-3 py-2 font-medium">点击</th>
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">点击</th>
                             <th className="px-3 py-2 text-right font-medium">操作</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                           {detailLinks.map((l) => (
                             <tr key={l.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                              <td className="px-3 py-2">
-                                <p className="font-medium text-brand-600 dark:text-brand-400">
+                              <td className="max-w-[180px] px-3 py-2 md:max-w-none">
+                                <p className="truncate font-medium text-brand-600 dark:text-brand-400" title={l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}>
                                   {l.domain_name ? `${l.domain_name}/${l.short_code}` : `/${l.short_code}`}
                                 </p>
                                 <p className="truncate text-xs text-gray-500 dark:text-gray-400">{l.name || '（未命名）'}</p>
+                                {/* 移动端：在短链单元格下方补充目标、归属组与点击数 */}
+                                <p className="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500 sm:hidden" title={l.target_url}>{l.target_url}</p>
+                                <p className="truncate text-xs text-gray-400 dark:text-gray-500 sm:hidden">
+                                  归属组：{l.group_name || '个人'} · {l.click_count} 次访问
+                                </p>
                               </td>
-                              <td className="max-w-[180px] px-3 py-2">
+                              <td className="hidden max-w-[180px] px-3 py-2 sm:table-cell">
                                 <span className="block truncate text-xs text-gray-600 dark:text-gray-400" title={l.target_url}>
                                   {l.target_url}
                                 </span>
                               </td>
-                              <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                              <td className="hidden px-3 py-2 text-xs text-gray-500 sm:table-cell dark:text-gray-400">
                                 {l.group_name || '个人'}
                               </td>
                               <td className="px-3 py-2">
@@ -1100,7 +1131,7 @@ export default function Users() {
                                   <Badge tone="gray">已停用</Badge>
                                 )}
                               </td>
-                              <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{l.click_count}</td>
+                              <td className="hidden px-3 py-2 text-xs text-gray-500 sm:table-cell dark:text-gray-400">{l.click_count}</td>
                               <td className="px-3 py-2">
                                 <div className="flex items-center justify-end gap-1">
                                   <button

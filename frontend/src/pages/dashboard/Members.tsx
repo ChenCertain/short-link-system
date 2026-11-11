@@ -469,13 +469,13 @@ export default function Members() {
             />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-sm">
+              <table className="w-full text-sm md:min-w-[760px]">
                 <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                   <tr>
                     <th className="px-4 py-3 font-medium">成员</th>
-                    <th className="px-4 py-3 font-medium">组内身份</th>
-                    <th className="px-4 py-3 font-medium">状态</th>
-                    <th className="px-4 py-3 font-medium">已开权限</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">组内身份</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">状态</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">已开权限</th>
                     <th className="hidden px-4 py-3 font-medium xl:table-cell">加入时间</th>
                     <th className="px-4 py-3 text-right font-medium">操作</th>
                   </tr>
@@ -492,8 +492,30 @@ export default function Members() {
                         {member.link_count > 0 && (
                           <p className="mt-0.5 text-[11px] text-gray-400">{member.link_count} 条短链</p>
                         )}
+                        {/* 移动端：在成员单元格下方补充身份、状态与权限摘要 */}
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:hidden">
+                          <Badge tone={member.group_role === 'admin' ? 'purple' : 'gray'}>
+                            {member.group_role === 'admin' ? '组管理员' : '成员'}
+                          </Badge>
+                          {member.role === 'super_admin' && <Badge tone="blue">超级管理员</Badge>}
+                          <StatusBadge status={member.status === 'active' ? 'active' : 'disabled'} />
+                          {member.require_review ? (
+                            <Badge tone="yellow">
+                              {member.review_by === 'parent'
+                                ? '父组审核'
+                                : member.review_by === 'super_admin'
+                                  ? '超管审核'
+                                  : '组内审核'}
+                            </Badge>
+                          ) : (
+                            <Badge tone="gray">免审核</Badge>
+                          )}
+                          <span className="text-[11px] text-gray-400">
+                            已开启 {enabledCount(member)} / {GROUP_PERMISSION_DEFS.length} 项权限
+                          </span>
+                        </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge tone={member.group_role === 'admin' ? 'purple' : 'gray'}>
                             {member.group_role === 'admin' ? '组管理员' : '成员'}
@@ -501,7 +523,7 @@ export default function Members() {
                           {member.role === 'super_admin' && <Badge tone="blue">超级管理员</Badge>}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden px-4 py-3 sm:table-cell">
                         <div className="flex flex-wrap items-center gap-1">
                           <StatusBadge status={member.status === 'active' ? 'active' : 'disabled'} />
                           {member.require_review ? (
@@ -517,7 +539,7 @@ export default function Members() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                      <td className="hidden px-4 py-3 text-xs text-gray-500 sm:table-cell dark:text-gray-400">
                         {enabledCount(member)} / {GROUP_PERMISSION_DEFS.length} 项
                       </td>
                       <td className="hidden px-4 py-3 text-xs text-gray-500 dark:text-gray-400 xl:table-cell">
@@ -916,12 +938,12 @@ export default function Members() {
             <p className="py-8 text-center text-sm text-gray-400">该成员暂无短链</p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-              <table className="w-full min-w-[680px] text-sm">
+              <table className="w-full text-sm md:min-w-[680px]">
                 <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                   <tr>
                     <th className="px-3 py-2 font-medium">短链</th>
-                    <th className="px-3 py-2 font-medium">目标链接</th>
-                    <th className="px-3 py-2 font-medium">归属组</th>
+                    <th className="hidden px-3 py-2 font-medium sm:table-cell">目标链接</th>
+                    <th className="hidden px-3 py-2 font-medium sm:table-cell">归属组</th>
                     <th className="px-3 py-2 font-medium">状态</th>
                     <th className="px-3 py-2 text-right font-medium">操作</th>
                   </tr>
@@ -929,18 +951,21 @@ export default function Members() {
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {memberLinks.map((link) => (
                     <tr key={link.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                      <td className="px-3 py-2">
-                        <p className="font-medium text-brand-600 dark:text-brand-400">
+                      <td className="max-w-[180px] px-3 py-2 md:max-w-none">
+                        <p className="truncate font-medium text-brand-600 dark:text-brand-400" title={link.domain_name ? `${link.domain_name}/${link.short_code}` : `/${link.short_code}`}>
                           {link.domain_name ? `${link.domain_name}/${link.short_code}` : `/${link.short_code}`}
                         </p>
                         <p className="truncate text-xs text-gray-500 dark:text-gray-400">{link.name || '（未命名）'}</p>
+                        {/* 移动端：在短链单元格下方补充目标与归属组 */}
+                        <p className="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500 sm:hidden" title={link.target_url}>{link.target_url}</p>
+                        <p className="truncate text-xs text-gray-400 dark:text-gray-500 sm:hidden">归属组：{link.group_name || '个人'}</p>
                       </td>
-                      <td className="max-w-[180px] px-3 py-2">
+                      <td className="hidden max-w-[180px] px-3 py-2 sm:table-cell">
                         <span className="block truncate text-xs text-gray-600 dark:text-gray-400" title={link.target_url}>
                           {link.target_url}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                      <td className="hidden px-3 py-2 text-xs text-gray-500 sm:table-cell dark:text-gray-400">
                         {link.group_name || '个人'}
                       </td>
                       <td className="px-3 py-2">

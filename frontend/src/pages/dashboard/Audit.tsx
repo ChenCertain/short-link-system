@@ -118,36 +118,47 @@ export default function Audit() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm md:min-w-[640px]">
                 <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                   <tr>
-                    <th className="px-4 py-3 font-medium">时间</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">时间</th>
                     <th className="px-4 py-3 font-medium">操作人</th>
                     <th className="px-4 py-3 font-medium">操作</th>
                     <th className="hidden px-4 py-3 font-medium md:table-cell">对象</th>
-                    <th className="px-4 py-3 font-medium">IP / 归属地</th>
+                    <th className="hidden px-4 py-3 font-medium sm:table-cell">IP / 归属地</th>
                     <th className="hidden px-4 py-3 font-medium xl:table-cell">详情</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {logs.map((log) => (
                     <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                      <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                      <td className="hidden whitespace-nowrap px-4 py-3 text-xs text-gray-500 sm:table-cell dark:text-gray-400">
                         {formatDateTime(log.timestamp)}
                       </td>
                       <td className="px-4 py-3">
                         <p className="text-gray-700 dark:text-gray-300">{log.user_name || log.user_email || '-'}</p>
-                        <p className="text-xs text-gray-400">{log.user_email}</p>
+                        <p className="truncate text-xs text-gray-400">{log.user_email}</p>
+                        {/* 移动端：在操作人下方补充时间与 IP */}
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-400 sm:hidden">
+                          <span>{formatDateTime(log.timestamp)}</span>
+                          <span className="font-mono">{log.ip || '-'}</span>
+                          <span>{log.location || '未知归属地'}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <Badge tone="blue">{actionLabel(log.action)}</Badge>
+                        {log.target_type && (
+                          <p className="mt-0.5 truncate text-[11px] text-gray-400 md:hidden" title={`${targetTypeLabel(log.target_type)}${log.target_id ? ` #${log.target_id}` : ''}`}>
+                            {targetTypeLabel(log.target_type)}{log.target_id ? ` #${log.target_id}` : ''}
+                          </p>
+                        )}
                       </td>
                       <td className="hidden px-4 py-3 text-xs text-gray-500 dark:text-gray-400 md:table-cell">
                         {log.target_type
                           ? `${targetTypeLabel(log.target_type)}${log.target_id ? ` #${log.target_id}` : ''}`
                           : '-'}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-xs">
+                      <td className="hidden whitespace-nowrap px-4 py-3 text-xs sm:table-cell">
                         <p className="font-mono text-gray-600 dark:text-gray-400">{log.ip || '-'}</p>
                         <p className="text-gray-400">{log.location || '未知归属地'}</p>
                       </td>

@@ -304,10 +304,10 @@ export default function LinkDetail() {
           <div className="flex h-32 items-center justify-center text-sm text-gray-400">暂无访问数据</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm md:min-w-[640px]">
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3 font-medium">访问时间</th>
+                  <th className="hidden px-4 py-3 font-medium sm:table-cell">访问时间</th>
                   <th className="px-4 py-3 font-medium">IP</th>
                   <th className="hidden px-4 py-3 font-medium sm:table-cell">地区</th>
                   <th className="hidden px-4 py-3 font-medium md:table-cell">来源</th>
@@ -317,11 +317,24 @@ export default function LinkDetail() {
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {data.recent.map((record, index) => (
                   <tr key={`${record.timestamp}-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                    <td className="whitespace-nowrap px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                    <td className="hidden whitespace-nowrap px-4 py-2.5 text-xs text-gray-500 sm:table-cell dark:text-gray-400">
                       {formatDateTime(record.timestamp)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-gray-700 dark:text-gray-300">
                       {record.ip || '-'}
+                      {/* 移动端：在 IP 下方补充访问时间与地区 */}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-sans text-gray-400 sm:hidden">
+                        <span>{formatDateTime(record.timestamp)}</span>
+                        {[record.country ? countryLabel(record.country) : null, record.region, record.city]
+                          .filter(Boolean)
+                          .join(' / ') && (
+                          <span>
+                            {[record.country ? countryLabel(record.country) : null, record.region, record.city]
+                              .filter(Boolean)
+                              .join(' / ')}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="hidden px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400 sm:table-cell">
                       {[record.country ? countryLabel(record.country) : null, record.region, record.city]
