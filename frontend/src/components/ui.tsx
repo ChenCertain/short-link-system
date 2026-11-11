@@ -127,12 +127,12 @@ export function Card({ children, className }: { children: ReactNode; className?:
 
 export function CardHeader({ title, description, action }: { title: ReactNode; description?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
-      <div>
+    <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5 dark:border-gray-800">
+      <div className="min-w-0">
         <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
         {description && <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{description}</p>}
       </div>
-      {action}
+      {action && <div className="w-full sm:w-auto">{action}</div>}
     </div>
   )
 }

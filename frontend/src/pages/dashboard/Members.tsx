@@ -304,7 +304,8 @@ export default function Members() {
   }
 
   const openPermission = (member: ScopedMember) => {
-    const defaults = defaultPermissionMap(member.group_role)
+    // 以「生效身份」为基线：父组管理员即使在子组是普通成员，默认也按管理员权限计算
+    const defaults = defaultPermissionMap(member.permission_role || member.group_role)
     setPermDefaults(defaults)
     setPermValue({ ...defaults, ...member.permissions_override })
     setPermMember(member)
@@ -317,7 +318,7 @@ export default function Members() {
       await groupsApi.updateMemberPermissions(
         current.id,
         permMember.id,
-        diffFromDefaults(permValue, permMember.group_role),
+        diffFromDefaults(permValue, permMember.permission_role || permMember.group_role),
       )
       show('权限已保存', 'success')
       setPermMember(null)
@@ -380,7 +381,10 @@ export default function Members() {
   }
 
   const enabledCount = (member: ScopedMember) => {
-    const effective = { ...defaultPermissionMap(member.group_role), ...member.permissions_override }
+    const effective = {
+      ...defaultPermissionMap(member.permission_role || member.group_role),
+      ...member.permissions_override,
+    }
     return GROUP_PERMISSION_DEFS.filter((def) => effective[def.key] === true).length
   }
 
@@ -660,7 +664,7 @@ export default function Members() {
             <Label htmlFor="candidate-search">搜索用户</Label>
             <Input
               id="candidate-search"
-              placeholder="输入姓名或邮箱搜索不在该组的用户"
+              placeholder={isSuperAdmin ? '输入姓名或邮箱搜索不在该组的用户' : '输入对方完整邮箱精确查找'}
               value={candidateSearch}
               onChange={(e) => setCandidateSearch(e.target.value)}
             />
@@ -957,7 +961,9 @@ export default function Members() {
                           <button
                             onClick={() =>
                               window.open(
-                                `https://${link.domain_name || window.location.host}/${link.short_code}`,
+                                link.domain_name
+                                  ? `https://${link.domain_name}/${link.short_code}`
+                                  : `${window.location.origin}/${link.short_code}`,
                                 '_blank',
                                 'noopener',
                               )

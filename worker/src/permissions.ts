@@ -2,8 +2,6 @@
 // 说明：系统只有两种全局角色（super_admin / user），
 // 「项目组管理员」由 user_group_relations.role = 'admin' 表达，不再使用 project_admin 角色。
 
-export type ReviewBy = 'auto' | 'parent' | 'super_admin';
-
 /** 用户作为管理员管理的项目组 id 列表（不含父组继承） */
 export async function getManagedGroupIds(db: D1Database, userId: number): Promise<number[]> {
   const rows = await db
@@ -61,14 +59,23 @@ export async function expandGroupIdsWithDescendants(db: D1Database, rootIds: num
     .prepare('SELECT id, parent_id FROM project_groups')
     .all<{ id: number; parent_id: number | null }>();
 
+  // 建一次「父 → 子」索引后做栈遍历，避免每轮全表扫描（原实现为 O(层数 × 全表)）
+  const childrenOf = new Map<number, number[]>();
+  for (const g of all.results) {
+    if (g.parent_id === null) continue;
+    const list = childrenOf.get(g.parent_id);
+    if (list) list.push(g.id);
+    else childrenOf.set(g.parent_id, [g.id]);
+  }
+
   const result = new Set<number>(rootIds);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const g of all.results) {
-      if (g.parent_id && result.has(g.parent_id) && !result.has(g.id)) {
-        result.add(g.id);
-        changed = true;
+  const stack = [...rootIds];
+  while (stack.length > 0) {
+    const id = stack.pop() as number;
+    for (const child of childrenOf.get(id) || []) {
+      if (!result.has(child)) {
+        result.add(child);
+        stack.push(child);
       }
     }
   }
@@ -349,32 +356,6 @@ export async function getGroupPermissions(
 }
 
 /**
- * 用户在组内的生效身份：只要父组链上任意一层是管理员，即视为管理员（与 getGroupPermissions 一致）。
- * 用于前端判断「默认权限基线」，未加入该组返回 null。
- */
-export async function getGroupPermissionRole(
-  db: D1Database,
-  userId: number,
-  groupId: number | null,
-): Promise<'admin' | 'member' | null> {
-  if (!groupId) return null;
-  let current: number | null = groupId;
-  let found = false;
-  for (let i = 0; i < 20 && current; i++) {
-    const row = await db
-      .prepare('SELECT role FROM user_group_relations WHERE user_id = ? AND group_id = ?')
-      .bind(userId, current)
-      .first<{ role: 'admin' | 'member' }>();
-    if (row) {
-      found = true;
-      if (row.role === 'admin') return 'admin';
-    }
-    current = await getParentId(db, current);
-  }
-  return found ? 'member' : null;
-}
-
-/**
  * 批量计算多个用户在指定项目组内的有效权限与生效身份。
  * 组详情页需要为每个成员展示权限，逐成员调用 getGroupPermissions 会产生
  * 「成员数 × 祖链层数」次串行查询，这里统一为两次查询。
@@ -470,16 +451,18 @@ export async function hasGroupPermission(
 }
 
 /**
- * 批量筛出用户具备某项权限的项目组（语义与 getGroupPermissions 一致，沿父组链继承）。
- * 列表查询时一次性完成过滤，避免逐组发起多次查询。
+ * 批量计算一个用户在多个项目组内的有效权限（语义与 getGroupPermissions 完全一致）。
+ * 只发起两次查询（全部组 + 该用户的全部关联），避免「组数 × 祖链层数」次串行查询。
+ * 未加入的组返回全 false 的权限表。
  */
-export async function filterGroupsWithPermission(
+export async function getGroupPermissionsForGroups(
   db: D1Database,
   userId: number,
   groupIds: number[],
-  key: string,
-): Promise<number[]> {
-  if (groupIds.length === 0) return [];
+): Promise<Record<number, Record<string, boolean>>> {
+  const result: Record<number, Record<string, boolean>> = {};
+  const uniqueIds = [...new Set(groupIds)];
+  if (uniqueIds.length === 0) return result;
 
   const groups = await db
     .prepare('SELECT id, parent_id FROM project_groups')
@@ -506,8 +489,7 @@ export async function filterGroupsWithPermission(
   const relationOf = new Map<number, RelationRow>();
   for (const relation of relations) relationOf.set(relation.group_id, relation);
 
-  const result: number[] = [];
-  for (const groupId of groupIds) {
+  for (const groupId of uniqueIds) {
     let nearest: RelationRow | null = null;
     let isAdmin = false;
     let current: number | null = groupId;
@@ -519,13 +501,29 @@ export async function filterGroupsWithPermission(
       }
       current = parentOf.get(current) ?? null;
     }
-    if (!nearest) continue;
-
+    if (!nearest) {
+      result[groupId] = buildPermissionMap(GROUP_PERMISSION_KEYS, [], {});
+      continue;
+    }
     const defaults = isAdmin ? ADMIN_DEFAULT_PERMISSIONS : MEMBER_DEFAULT_PERMISSIONS;
-    const perms = buildPermissionMap(GROUP_PERMISSION_KEYS, defaults, parsePermissionJson(nearest.permissions));
-    if (perms[key] === true) result.push(groupId);
+    result[groupId] = buildPermissionMap(GROUP_PERMISSION_KEYS, defaults, parsePermissionJson(nearest.permissions));
   }
   return result;
+}
+
+/**
+ * 批量筛出用户具备某项权限的项目组（基于 getGroupPermissionsForGroups，
+ * 语义与 getGroupPermissions 一致，沿父组链继承）。
+ */
+export async function filterGroupsWithPermission(
+  db: D1Database,
+  userId: number,
+  groupIds: number[],
+  key: string,
+): Promise<number[]> {
+  if (groupIds.length === 0) return [];
+  const permsByGroup = await getGroupPermissionsForGroups(db, userId, groupIds);
+  return groupIds.filter((groupId) => permsByGroup[groupId]?.[key] === true);
 }
 
 /** 用户全局权限（超级管理员全开） */

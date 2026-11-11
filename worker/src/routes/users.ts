@@ -4,7 +4,7 @@
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { jsonResponse, hashPassword } from '../utils';
+import { jsonResponse, hashPassword, parseIntClamped } from '../utils';
 import { authMiddleware, requireGlobalPermission, logAudit } from '../middleware';
 import {
   GLOBAL_PERMISSION_KEYS,
@@ -16,6 +16,9 @@ import {
 } from '../permissions';
 
 const users = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const NAME_MAX_LENGTH = 50;
 
 // 所有路由需要登录
 users.use('*', authMiddleware);
@@ -68,8 +71,8 @@ async function loadGroupPaths(db: D1Database): Promise<Map<number, string>> {
 
 // ========== 获取用户列表（支持按项目组 / 组内身份 / 角色 / 状态筛选） ==========
 users.get('/', requireGlobalPermission('user.manage'), async (c) => {
-  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
-  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const page = parseIntClamped(c.req.query('page'), 1, 1, 1_000_000);
+  const pageSize = parseIntClamped(c.req.query('pageSize'), 20, 1, 100);
   const search = c.req.query('search') || '';
   const groupId = parseInt(c.req.query('groupId') || '0') || 0;
   const groupRole = c.req.query('groupRole') || '';
@@ -180,12 +183,18 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
     group_role?: 'admin' | 'member';
   }>();
 
-  const email = (body.email || '').trim().toLowerCase();
-  const name = (body.name || '').trim();
-  const password = body.password || '';
+  const email = (typeof body.email === 'string' ? body.email : '').trim().toLowerCase();
+  const name = (typeof body.name === 'string' ? body.name : '').trim();
+  const password = typeof body.password === 'string' ? body.password : '';
 
   if (!email || !name) {
     return jsonResponse({ error: '请填写邮箱和用户名' }, 400);
+  }
+  if (!EMAIL_PATTERN.test(email)) {
+    return jsonResponse({ error: '邮箱格式不正确' }, 400);
+  }
+  if (name.length > NAME_MAX_LENGTH) {
+    return jsonResponse({ error: `用户名最长 ${NAME_MAX_LENGTH} 个字符` }, 400);
   }
   if (password && password.length < 8) {
     return jsonResponse({ error: '密码长度至少 8 位' }, 400);
@@ -199,10 +208,16 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
   }
 
   // 可选：创建时直接加入某个项目组（组内身份 admin / member）
-  const groupId = body.group_id ? Number(body.group_id) : null;
+  const hasGroup = body.group_id !== undefined && body.group_id !== null && Number(body.group_id) !== 0;
+  const groupId = hasGroup ? Number(body.group_id) : null;
   const groupRole: 'admin' | 'member' = body.group_role === 'admin' ? 'admin' : 'member';
   if (groupId !== null) {
-    if (!Number.isFinite(groupId)) return jsonResponse({ error: '无效的项目组' }, 400);
+    if (!Number.isInteger(groupId) || groupId <= 0) return jsonResponse({ error: '无效的项目组' }, 400);
+    // 仅超级管理员可以通过全局用户管理接口分配项目组与组内身份；
+    // 委派了 user.manage 的账号不应借此获得任意组的管理员权限。
+    if (currentUser.role !== 'super_admin') {
+      return jsonResponse({ error: '只有超级管理员可以将用户加入项目组，请在「成员管理」中操作' }, 403);
+    }
     const group = await c.env.DB.prepare('SELECT id FROM project_groups WHERE id = ?').bind(groupId).first();
     if (!group) return jsonResponse({ error: '项目组不存在' }, 404);
     if (body.role === 'super_admin' && groupRole === 'admin') {
@@ -223,16 +238,28 @@ users.post('/', requireGlobalPermission('user.manage'), async (c) => {
   const reviewBy =
     body.review_by === 'super_admin' ? 'super_admin' : body.review_by === 'parent' ? 'parent' : 'auto';
 
-  const result = await c.env.DB.prepare(
-    'INSERT INTO users (email, password_hash, name, role, status, require_review, review_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(email, passwordHash, name, body.role, 'active', requireReview, reviewBy).run();
+  let result: D1Result;
+  try {
+    result = await c.env.DB.prepare(
+      'INSERT INTO users (email, password_hash, name, role, status, require_review, review_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(email, passwordHash, name, body.role, 'active', requireReview, reviewBy).run();
+  } catch {
+    // 并发创建同一邮箱时唯一索引会报错
+    return jsonResponse({ error: '该邮箱已被使用' }, 400);
+  }
 
   const userId = result.meta.last_row_id;
 
   if (groupId !== null) {
-    await c.env.DB.prepare('INSERT INTO user_group_relations (user_id, group_id, role) VALUES (?, ?, ?)')
-      .bind(userId, groupId, groupRole)
-      .run();
+    try {
+      await c.env.DB.prepare('INSERT INTO user_group_relations (user_id, group_id, role) VALUES (?, ?, ?)')
+        .bind(userId, groupId, groupRole)
+        .run();
+    } catch {
+      // 回滚已创建的用户，避免出现「用户存在但未入组」的半成品
+      await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run().catch(() => undefined);
+      return jsonResponse({ error: '加入项目组失败，请重试' }, 500);
+    }
   }
 
   await logAudit(c.env.DB, currentUser.user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
@@ -281,6 +308,32 @@ users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
     return jsonResponse({ error: '用户不存在' }, 404);
   }
 
+  // 超级管理员账号只能由超级管理员本人维护；仅被授予 user.manage 的普通账号
+  // 不能重置其他超级管理员的密码 / 禁用账号，避免越权接管。
+  if (user.role === 'super_admin' && currentUser.role !== 'super_admin') {
+    return jsonResponse({ error: '超级管理员账号只能由超级管理员维护' }, 403);
+  }
+  // 超级管理员之间只有「最高权限账户」能互相管理，避免同级超管互相重置密码 / 禁用
+  if (user.role === 'super_admin' && userId !== currentUser.user_id
+    && !(await isRootAccount(c.env.DB, currentUser.user_id))) {
+    return jsonResponse({ error: '只有最高权限账户可以管理其他超级管理员' }, 403);
+  }
+
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string' || !body.name.trim()) {
+      return jsonResponse({ error: '用户名不能为空' }, 400);
+    }
+    if (body.name.trim().length > NAME_MAX_LENGTH) {
+      return jsonResponse({ error: `用户名最长 ${NAME_MAX_LENGTH} 个字符` }, 400);
+    }
+  }
+  if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
+    return jsonResponse({ error: '状态只能是 active 或 disabled' }, 400);
+  }
+  if (body.password !== undefined && typeof body.password !== 'string') {
+    return jsonResponse({ error: '密码格式不正确' }, 400);
+  }
+
   // 最高权限账户：只有它自己能维护，且不能被降级或禁用
   if (Number(user.is_root || 0) === 1) {
     if (!(await isRootAccount(c.env.DB, currentUser.user_id))) {
@@ -319,7 +372,7 @@ users.put('/:id', requireGlobalPermission('user.manage'), async (c) => {
 
   if (body.name) {
     updates.push('name = ?');
-    params.push(body.name);
+    params.push(body.name.trim());
   }
   if (body.role) {
     updates.push('role = ?');
@@ -629,8 +682,8 @@ users.get('/:id/logs', async (c) => {
     return jsonResponse({ error: '权限不足' }, 403);
   }
 
-  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
-  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const page = parseIntClamped(c.req.query('page'), 1, 1, 1_000_000);
+  const pageSize = parseIntClamped(c.req.query('pageSize'), 20, 1, 100);
   const action = (c.req.query('action') || '').trim();
   const offset = (page - 1) * pageSize;
 
@@ -676,8 +729,8 @@ users.get('/:id/links', async (c) => {
     return jsonResponse({ error: '权限不足' }, 403);
   }
 
-  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
-  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '20')));
+  const page = parseIntClamped(c.req.query('page'), 1, 1, 1_000_000);
+  const pageSize = parseIntClamped(c.req.query('pageSize'), 20, 1, 100);
   const offset = (page - 1) * pageSize;
 
   const rows = await c.env.DB.prepare(

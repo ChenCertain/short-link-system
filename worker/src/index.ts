@@ -1,6 +1,7 @@
 // Worker 主入口
 
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import type { Env } from './types';
 import { jsonResponse } from './utils';
 import { serveStatic } from './assets';
@@ -45,6 +46,15 @@ app.use('*', async (c, next) => {
 // ========== 全局错误处理 ==========
 // 把未捕获异常统一转成 JSON，并输出堆栈便于排查（避免前端只看到 Internal Server Error）
 app.onError((err, c) => {
+  // Hono 自身抛出的 HTTPException 保留其状态码与响应
+  if (err instanceof HTTPException) return err.getResponse();
+
+  // 请求体不是合法 JSON 时属于客户端错误，不应返回 500
+  const contentType = c.req.header('Content-Type') || '';
+  if (err instanceof SyntaxError && contentType.toLowerCase().includes('application/json')) {
+    return c.json({ error: '请求体格式不正确，请提交合法的 JSON' }, 400);
+  }
+
   console.error('[worker error]', c.req.method, c.req.path, err);
   if (c.req.path.startsWith('/api/')) {
     return c.json({ error: '服务器内部错误，请稍后重试' }, 500);

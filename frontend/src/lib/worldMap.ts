@@ -106,7 +106,6 @@ export function getCountryShapes(): CountryShape[] {
     if (!path) continue
 
     const id = geometry.id ? String(geometry.id) : undefined
-    // 跳过南极洲（投影范围已裁掉，保留只会是一条无用直线）
     shapes.push({
       code: id ? NUMERIC_TO_ALPHA2[id] || null : null,
       name: geometry.properties?.name || '',

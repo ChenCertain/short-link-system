@@ -100,6 +100,8 @@ export interface ShortLink {
   reviewed_by?: number | null
   reviewed_at?: number | null
   review_group_id?: number | null
+  /** 是否设置了访问密码（后端不再返回密码哈希本身） */
+  has_password?: number
   /** 列表接口返回：当前用户是否有权修改/删除 */
   can_manage?: boolean
 }
@@ -126,6 +128,8 @@ export interface GroupDetail {
   permissions?: PermissionMap
   /** 是否可查看成员 IP / 权限明细（后端按权限裁剪） */
   can_view_member_detail?: boolean
+  /** 当前用户是否为该组的直接管理员（同级管理员判断用） */
+  is_direct_admin?: boolean
 }
 
 export interface AccessRecord {

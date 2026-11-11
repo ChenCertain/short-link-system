@@ -13,12 +13,15 @@ import {
   getManagedGroupIds,
   expandGroupIdsWithDescendants,
   hasGroupPermission,
-  getGroupPermissionRole,
+  getGroupPermissionsForMembers,
+  getGroupPermissionsForGroups,
   parsePermissionJson,
   resolveReviewGroupId,
 } from '../permissions';
 
 const members = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 members.use('*', authMiddleware);
 
@@ -107,22 +110,36 @@ members.get('/scope', async (c) => {
     for (const rel of rels.results) directAdminGroups.add(rel.group_id);
   }
 
+  // 批量算出当前用户在范围内所有组的权限，避免「每组 4 次祖链查询」
+  const myPermsByGroup = isSuperAdmin
+    ? null
+    : await getGroupPermissionsForGroups(c.env.DB, currentUser.user_id, scopeIds);
+
   const result = [];
   for (const gid of scopeIds) {
     const group = byId.get(gid);
     if (!group) continue;
 
-    const canConfigPermission =
-      isSuperAdmin || (await hasGroupPermission(c.env.DB, currentUser.user_id, gid, 'group.member.permission'));
-    const canSetRole =
-      isSuperAdmin || (await hasGroupPermission(c.env.DB, currentUser.user_id, gid, 'group.member.role'));
-    const canRemoveMember =
-      isSuperAdmin || (await hasGroupPermission(c.env.DB, currentUser.user_id, gid, 'group.member.remove'));
+    const myPerms = myPermsByGroup?.[gid] || {};
+    const canConfigPermission = isSuperAdmin || myPerms['group.member.permission'] === true;
+    const canSetRole = isSuperAdmin || myPerms['group.member.role'] === true;
+    const canRemoveMember = isSuperAdmin || myPerms['group.member.remove'] === true;
+    const canCreateUser = isSuperAdmin || myPerms['group.user.create'] === true;
     const isDirect = directAdminGroups.has(gid);
+    // 最后登录 IP / 时间属于敏感信息，仅超管与具备「配置成员权限」的管理员可见
+    const canViewSensitive = isSuperAdmin || canConfigPermission;
+
+    // 一次性算出该组所有成员的生效身份，避免逐成员串行查询祖链
+    const groupRows = byGroup.get(gid) || [];
+    const permissionBatch = await getGroupPermissionsForMembers(
+      c.env.DB,
+      groupRows.map((member) => member.id),
+      gid,
+    );
 
     const groupMembers = [];
-    for (const row of byGroup.get(gid) || []) {
-      const permissionRole = await getGroupPermissionRole(c.env.DB, row.id, gid);
+    for (const row of groupRows) {
+      const permissionRole = permissionBatch[row.id]?.role || row.group_role;
       const isSelf = row.id === currentUser.user_id;
       // 同级管理员（我直接管这个组，对方也是管理员）之间不能互相操作
       const sameLevelAdmin = isDirect && row.group_role === 'admin' && !isSuperAdmin;
@@ -136,8 +153,8 @@ members.get('/scope', async (c) => {
         permission_role: permissionRole || row.group_role,
         permissions_override: parsePermissionJson(row.permissions_override),
         joined_at: row.joined_at,
-        last_login_at: row.last_login_at,
-        last_login_ip: row.last_login_ip,
+        last_login_at: canViewSensitive ? row.last_login_at : null,
+        last_login_ip: canViewSensitive ? row.last_login_ip : null,
         link_count: row.link_count,
         is_self: isSelf,
         require_review: !!row.require_review,
@@ -164,8 +181,7 @@ members.get('/scope', async (c) => {
       can_config_permission: canConfigPermission,
       can_set_role: canSetRole,
       can_remove_member: canRemoveMember,
-      can_create_user:
-        isSuperAdmin || (await hasGroupPermission(c.env.DB, currentUser.user_id, gid, 'group.user.create')),
+      can_create_user: canCreateUser,
       members: groupMembers,
     });
   }
@@ -190,9 +206,9 @@ members.post('/users', async (c) => {
     review_by?: 'auto' | 'parent' | 'super_admin';
   }>();
 
-  const name = (body.name || '').trim();
-  const email = (body.email || '').trim().toLowerCase();
-  const password = body.password || '';
+  const name = (typeof body.name === 'string' ? body.name : '').trim();
+  const email = (typeof body.email === 'string' ? body.email : '').trim().toLowerCase();
+  const password = typeof body.password === 'string' ? body.password : '';
   const groupId = Number(body.group_id);
   const groupRole: 'admin' | 'member' = body.group_role === 'admin' ? 'admin' : 'member';
   const requireReview = body.require_review === false ? 0 : 1;
@@ -200,8 +216,10 @@ members.post('/users', async (c) => {
     body.review_by === 'super_admin' ? 'super_admin' : body.review_by === 'parent' ? 'parent' : 'auto';
 
   if (!name || !email) return jsonResponse({ error: '请填写姓名和邮箱' }, 400);
+  if (!EMAIL_PATTERN.test(email)) return jsonResponse({ error: '邮箱格式不正确' }, 400);
+  if (name.length > 50) return jsonResponse({ error: '姓名最长 50 个字符' }, 400);
   if (password && password.length < 8) return jsonResponse({ error: '密码长度至少 8 位' }, 400);
-  if (!Number.isFinite(groupId)) return jsonResponse({ error: '请选择目标项目组' }, 400);
+  if (!Number.isInteger(groupId) || groupId <= 0) return jsonResponse({ error: '请选择目标项目组' }, 400);
 
   const group = await c.env.DB.prepare('SELECT id, name FROM project_groups WHERE id = ?')
     .bind(groupId)
@@ -227,14 +245,24 @@ members.post('/users', async (c) => {
   if (existing) return jsonResponse({ error: '该邮箱已被使用' }, 400);
 
   const passwordHash = password ? await hashPassword(password) : '';
-  const result = await c.env.DB.prepare(
-    'INSERT INTO users (email, password_hash, name, role, status, require_review, review_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).bind(email, passwordHash, name, 'user', 'active', requireReview, reviewBy).run();
+  let result: D1Result;
+  try {
+    result = await c.env.DB.prepare(
+      'INSERT INTO users (email, password_hash, name, role, status, require_review, review_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(email, passwordHash, name, 'user', 'active', requireReview, reviewBy).run();
+  } catch {
+    return jsonResponse({ error: '该邮箱已被使用' }, 400);
+  }
 
   const userId = result.meta.last_row_id;
-  await c.env.DB.prepare('INSERT INTO user_group_relations (user_id, group_id, role) VALUES (?, ?, ?)')
-    .bind(userId, groupId, groupRole)
-    .run();
+  try {
+    await c.env.DB.prepare('INSERT INTO user_group_relations (user_id, group_id, role) VALUES (?, ?, ?)')
+      .bind(userId, groupId, groupRole)
+      .run();
+  } catch {
+    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run().catch(() => undefined);
+    return jsonResponse({ error: '加入项目组失败，请重试' }, 500);
+  }
 
   await logAudit(c.env.DB, currentUser.user_id, 'create_user', c.req.raw, 'user', userId as number, JSON.stringify({
     email,

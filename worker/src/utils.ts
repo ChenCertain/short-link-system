@@ -152,26 +152,38 @@ export async function signJWT(payload: Omit<JWTPayload, 'iat' | 'exp'> & { exp?:
 
 // JWT 验证
 export async function verifyJWT(token: string, secret: string): Promise<JWTPayload | null> {
-  const verifyingSecret = assertJwtSecret(secret);
+  let verifyingSecret: string;
+  try {
+    verifyingSecret = assertJwtSecret(secret);
+  } catch {
+    return null;
+  }
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(verifyingSecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['verify']
-  );
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(verifyingSecret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
 
-  const sigBytes = base64urlToBytes(parts[2]);
-  const valid = await crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(`${parts[0]}.${parts[1]}`));
-  if (!valid) return null;
+    // 令牌格式非法（非 base64 / 非 JSON）时按无效令牌处理，不能抛异常变成 500
+    const sigBytes = base64urlToBytes(parts[2]);
+    const valid = await crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(`${parts[0]}.${parts[1]}`));
+    if (!valid) return null;
 
-  const payload: JWTPayload = JSON.parse(base64urlDecode(parts[1]));
-  if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-  return payload;
+    const payload = JSON.parse(base64urlDecode(parts[1])) as Partial<JWTPayload> | null;
+    if (!payload || typeof payload !== 'object') return null;
+    if (typeof payload.user_id !== 'number' || typeof payload.exp !== 'number') return null;
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload as JWTPayload;
+  } catch {
+    return null;
+  }
 }
 
 // Base64URL 编解码
@@ -222,6 +234,52 @@ export function jsonResponse(data: unknown, status: number = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * 解析分页 / 数量参数：非数字（如 ?pageSize=abc）回退默认值，并夹在 [min, max]。
+ * 直接 bind NaN 会让 D1 抛错返回 500。
+ */
+export function parseIntClamped(
+  raw: string | null | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
+// 审计详情中不应落库的敏感字段（密码 / 验证码 / 令牌）
+const SENSITIVE_DETAIL_KEY = /^(password|old_password|new_password|password_hash|verify_code|turnstile_token|token|secret)$/i;
+
+function redactValue(value: unknown, depth = 0): unknown {
+  if (depth > 5) return '[省略]';
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, depth + 1));
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = SENSITIVE_DETAIL_KEY.test(key) ? '[已脱敏]' : redactValue(item, depth + 1);
+    }
+    return result;
+  }
+  return value;
+}
+
+/**
+ * 审计详情脱敏：JSON 对象中的密码 / 验证码等字段替换为占位符，
+ * 避免「修改密码」「修改短链访问密码」把明文写进审计日志。
+ */
+export function redactAuditDetail(detail: string | null | undefined): string | null {
+  if (!detail) return detail ?? null;
+  const trimmed = detail.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return detail;
+  try {
+    return JSON.stringify(redactValue(JSON.parse(trimmed)));
+  } catch {
+    return detail;
+  }
 }
 
 // 获取请求 IP

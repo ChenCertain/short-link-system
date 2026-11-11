@@ -11,7 +11,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
-import { domainsApi, groupsApi, linksApi } from '@/lib/api'
+import { domainsApi, groupsApi, linksApi, publicApi } from '@/lib/api'
 import type { ProjectGroup, ShortLink } from '@/lib/types'
 import {
   Badge,
@@ -33,11 +33,10 @@ import {
   EditLinkModal,
   ExpiryField,
   URL_PROTOCOLS,
-  flattenGroups,
   splitProtocol,
   withProtocol,
 } from '@/components/EditLinkModal'
-import { buildGroupPaths } from '@/lib/groups'
+import { buildGroupPaths, flattenGroupTree } from '@/lib/groups'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { copyText, formatDateTime, localInputToTimestamp } from '@/lib/utils'
@@ -91,6 +90,8 @@ export default function Links() {
   const [error, setError] = useState('')
 
   const [groups, setGroups] = useState<ProjectGroup[]>([])
+  // 系统设置中的默认跳转类型（新建短链时作为初始值）
+  const [defaultRedirectType, setDefaultRedirectType] = useState<'301' | '302'>('302')
   const [domains, setDomains] = useState<{ id: number; domain: string; is_default_short_link: number }[]>([])
   // 当前所选项目组可用的短链域名
   const [groupDomains, setGroupDomains] = useState<{ id: number; domain: string; is_default_short_link: number }[]>([])
@@ -119,7 +120,7 @@ export default function Links() {
   const pageSize = 20
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
-  const groupOptions = useMemo(() => flattenGroups(groups), [groups])
+  const groupOptions = useMemo(() => flattenGroupTree(groups), [groups])
 
   // 项目组完整路径（父组 / 子组），用于表格展示
   const groupPathMap = useMemo(() => buildGroupPaths(filterOptions.groups), [filterOptions.groups])
@@ -180,6 +181,12 @@ export default function Links() {
       .shortLinkDomains()
       .then((data) => setDomains(data.domains))
       .catch(() => setDomains([]))
+    publicApi
+      .config()
+      .then((data) => {
+        if (data.default_redirect_type) setDefaultRedirectType(data.default_redirect_type)
+      })
+      .catch(() => undefined)
     void loadFilterOptions()
   }, [loadFilterOptions])
 
@@ -249,7 +256,7 @@ export default function Links() {
         redirect_type: Number(createForm.redirect_type),
       })
       setCreatedUrl(result.short_url)
-      setCreateForm(emptyForm)
+      setCreateForm({ ...emptyForm, redirect_type: defaultRedirectType })
       setCreateProtocol('https')
       setGroupDomains([])
       void loadFilterOptions()
@@ -346,12 +353,17 @@ export default function Links() {
               setCreateOpen(true)
               setCreatedUrl('')
               setCreateError('')
+              setCreateForm((prev) => ({ ...prev, redirect_type: defaultRedirectType }))
               // 有项目组则加载组内域名；否则回落到平台默认域名（未设置则为空）
               if (createForm.group_id) {
                 void loadGroupDomains(createForm.group_id)
               } else {
                 setGroupDomains([])
-                setCreateForm((prev) => ({ ...prev, domain_id: globalDefaultDomainId }))
+                setCreateForm((prev) => ({
+                  ...prev,
+                  domain_id: globalDefaultDomainId,
+                  redirect_type: defaultRedirectType,
+                }))
               }
             }}
           >

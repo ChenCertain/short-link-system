@@ -73,25 +73,27 @@ groups.get('/', async (c) => {
   ).bind(currentUser.user_id).all<{ group_id: number; role: 'admin' | 'member' }>();
 
   const byId = new Map(rows.map((g) => [g.id, g]));
+  // 建一次「父 → 子」索引，避免 BFS 每层全表扫描
+  const childrenOf = new Map<number, number[]>();
+  for (const g of rows) {
+    if (g.parent_id === null) continue;
+    const list = childrenOf.get(g.parent_id);
+    if (list) list.push(g.id);
+    else childrenOf.set(g.parent_id, [g.id]);
+  }
   const visible = new Set<number>();
   const myRoleByGroup = new Map<number, 'admin' | 'member'>();
 
   for (const rel of rels.results) {
     myRoleByGroup.set(rel.group_id, rel.role);
-    visible.add(rel.group_id);
 
     // 父组级（无论成员还是管理员）都能看到全部子组：向下展开所有后代
-    let queue = [rel.group_id];
-    const seen = new Set<number>();
-    while (queue.length) {
-      const next: number[] = [];
-      for (const gid of queue) {
-        if (seen.has(gid)) continue;
-        seen.add(gid);
-        visible.add(gid);
-        for (const g of rows) if (g.parent_id === gid) next.push(g.id);
-      }
-      queue = next;
+    const stack = [rel.group_id];
+    while (stack.length) {
+      const gid = stack.pop() as number;
+      if (visible.has(gid)) continue;
+      visible.add(gid);
+      for (const child of childrenOf.get(gid) || []) stack.push(child);
     }
 
     // 添加所有祖先，保证树结构可展示
@@ -375,8 +377,15 @@ groups.post('/', async (c) => {
     parent_id?: number;
   }>();
 
-  if (!body.name) {
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) {
     return jsonResponse({ error: '请填写项目组名称' }, 400);
+  }
+  if (name.length > 100) {
+    return jsonResponse({ error: '项目组名称最长 100 个字符' }, 400);
+  }
+  if (body.parent_id !== undefined && (!Number.isInteger(body.parent_id) || body.parent_id <= 0)) {
+    return jsonResponse({ error: '父项目组 ID 不正确' }, 400);
   }
 
   if (body.parent_id) {
@@ -399,9 +408,10 @@ groups.post('/', async (c) => {
     }
   }
 
+  const description = typeof body.description === 'string' ? body.description.trim() : null;
   const result = await c.env.DB.prepare(
     'INSERT INTO project_groups (name, description, parent_id, created_by) VALUES (?, ?, ?, ?)'
-  ).bind(body.name, body.description || null, body.parent_id || null, currentUser.user_id).run();
+  ).bind(name, description || null, body.parent_id || null, currentUser.user_id).run();
 
   const groupId = result.meta.last_row_id;
 
@@ -431,12 +441,21 @@ groups.put('/:id', async (c) => {
   if (name !== undefined && !name) {
     return jsonResponse({ error: '请填写项目组名称' }, 400);
   }
+  if (name !== undefined && name.length > 100) {
+    return jsonResponse({ error: '项目组名称最长 100 个字符' }, 400);
+  }
+  if (body.description !== undefined && body.description !== null && typeof body.description !== 'string') {
+    return jsonResponse({ error: '项目组描述格式不正确' }, 400);
+  }
 
   const updates: string[] = [];
-  const params: (string | number)[] = [];
+  const params: (string | number | null)[] = [];
 
   if (name !== undefined) { updates.push('name = ?'); params.push(name); }
-  if (body.description !== undefined) { updates.push('description = ?'); params.push(String(body.description)); }
+  if (body.description !== undefined) {
+    updates.push('description = ?');
+    params.push(body.description ? body.description.trim() || null : null);
+  }
 
   if (updates.length === 0) {
     return jsonResponse({ error: '没有需要更新的字段' }, 400);

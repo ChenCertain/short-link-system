@@ -130,7 +130,10 @@ export const profileApi = {
 
 // ============ 公开 ============
 export const publicApi = {
-  config: () => get<{ site_name: string; turnstile_site_key: string }>('/api/config/public'),
+  config: () =>
+    get<{ site_name: string; default_redirect_type?: '301' | '302'; turnstile_site_key: string }>(
+      '/api/config/public',
+    ),
 }
 
 // ============ 用户管理 ============

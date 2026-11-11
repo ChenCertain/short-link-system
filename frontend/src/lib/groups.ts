@@ -6,6 +6,36 @@ export interface FlatGroup {
   parent_id: number | null
 }
 
+/** 项目组树节点（兼容 groupsApi.list 返回的 ProjectGroup 结构） */
+export interface TreeGroup {
+  id: number
+  name: string
+  children?: TreeGroup[]
+}
+
+/**
+ * 项目组树 → 带缩进的下拉选项（父组排在子组之前）。
+ * indent：每层缩进字符；arrow：子组前是否加「└ 」标记。
+ */
+export function flattenGroupTree(
+  groups: TreeGroup[],
+  opts: { indent?: string; arrow?: boolean } = {},
+): { id: number; label: string }[] {
+  const indent = opts.indent ?? '　'
+  const result: { id: number; label: string }[] = []
+  const walk = (list: TreeGroup[], depth: number) => {
+    for (const g of list) {
+      result.push({
+        id: g.id,
+        label: `${indent.repeat(depth)}${opts.arrow && depth > 0 ? '└ ' : ''}${g.name}`,
+      })
+      if (g.children?.length) walk(g.children, depth + 1)
+    }
+  }
+  walk(groups, 0)
+  return result
+}
+
 /** 构建 id → 完整路径（父组 / 子组）的映射 */
 export function buildGroupPaths(groups: FlatGroup[]): Map<number, string> {
   const byId = new Map(groups.map((group) => [group.id, group]))

@@ -94,8 +94,11 @@ domains.post('/', requireRole('super_admin'), async (c) => {
     is_default_short_link?: boolean;
   }>();
 
-  if (!body.domain) {
+  if (typeof body.domain !== 'string' || !body.domain.trim()) {
     return jsonResponse({ error: '请填写域名' }, 400);
+  }
+  if (body.type !== undefined && !['short_link', 'admin', 'both'].includes(body.type)) {
+    return jsonResponse({ error: '域名类型不正确' }, 400);
   }
 
   // 清理域名格式
@@ -112,7 +115,10 @@ domains.post('/', requireRole('super_admin'), async (c) => {
     return jsonResponse({ error: '域名已存在' }, 400);
   }
 
-  const type = body.type && ['short_link', 'admin', 'both'].includes(body.type) ? body.type : 'both';
+  const type: 'short_link' | 'admin' | 'both' = body.type ?? 'both';
+  if (type === 'admin' && body.is_default_short_link) {
+    return jsonResponse({ error: '管理域名不能设为默认短链域名' }, 400);
+  }
 
   const result = await c.env.DB.prepare(
     'INSERT INTO domains (domain, type, is_default_short_link, status, added_by) VALUES (?, ?, ?, ?, ?)'
@@ -149,22 +155,43 @@ domains.post('/', requireRole('super_admin'), async (c) => {
 // ========== 更新域名 ==========
 domains.put('/:id', requireRole('super_admin'), async (c) => {
   const domainId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(domainId)) return jsonResponse({ error: '无效的域名 ID' }, 400);
   const body = await c.req.json<{
     type?: 'short_link' | 'admin' | 'both';
     is_default_short_link?: boolean;
     status?: 'active' | 'disabled' | 'pending_verification';
   }>();
 
-  const domain = await c.env.DB.prepare('SELECT * FROM domains WHERE id = ?').bind(domainId).first<{ id: number }>();
+  if (body.type !== undefined && !['short_link', 'admin', 'both'].includes(body.type)) {
+    return jsonResponse({ error: '域名类型不正确' }, 400);
+  }
+  if (body.status !== undefined && !['active', 'disabled', 'pending_verification'].includes(body.status)) {
+    return jsonResponse({ error: '域名状态不正确' }, 400);
+  }
+
+  const domain = await c.env.DB.prepare('SELECT * FROM domains WHERE id = ?')
+    .bind(domainId)
+    .first<{ id: number; type: string; status: string; is_default_short_link: number }>();
   if (!domain) {
     return jsonResponse({ error: '域名不存在' }, 404);
+  }
+
+  const nextType = body.type ?? domain.type;
+  const nextStatus = body.status ?? domain.status;
+  if (body.is_default_short_link === true) {
+    if (nextType === 'admin') {
+      return jsonResponse({ error: '管理域名不能设为默认短链域名' }, 400);
+    }
+    if (nextStatus !== 'active') {
+      return jsonResponse({ error: '只有已验证启用的域名才能设为默认短链域名' }, 400);
+    }
   }
 
   const updates: string[] = [];
   const params: (string | number)[] = [];
 
-  if (body.type) { updates.push('type = ?'); params.push(body.type); }
-  if (body.status) { updates.push('status = ?'); params.push(body.status); }
+  if (body.type !== undefined) { updates.push('type = ?'); params.push(body.type); }
+  if (body.status !== undefined) { updates.push('status = ?'); params.push(body.status); }
   if (body.is_default_short_link !== undefined) {
     updates.push('is_default_short_link = ?');
     params.push(body.is_default_short_link ? 1 : 0);
@@ -182,6 +209,20 @@ domains.put('/:id', requireRole('super_admin'), async (c) => {
   // 如果设为默认，取消其他默认
   if (body.is_default_short_link) {
     await c.env.DB.prepare('UPDATE domains SET is_default_short_link = 0 WHERE id != ?').bind(domainId).run();
+  }
+
+  // 域名停用 / 类型变更会直接影响跳转，必须清掉该域名下所有短链的缓存
+  const affectsRouting = (body.status !== undefined && body.status !== domain.status)
+    || (body.type !== undefined && body.type !== domain.type);
+  if (affectsRouting) {
+    const affected = await c.env.DB.prepare('SELECT short_code FROM short_links WHERE domain_id = ?')
+      .bind(domainId)
+      .all<{ short_code: string }>();
+    if (affected.results.length > 0) {
+      c.executionCtx.waitUntil(
+        invalidateLinkCache(c.env, ...affected.results.map((row) => row.short_code)),
+      );
+    }
   }
 
   await logAudit(c.env.DB, c.get('user').user_id, 'update_domain', c.req.raw, 'domain', domainId, JSON.stringify(body));
@@ -336,6 +377,7 @@ async function verifyDomain(domain: string, expectedTarget: string): Promise<Ver
 // ========== 验证域名 DNS ==========
 domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
   const domainId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(domainId)) return jsonResponse({ error: '无效的域名 ID' }, 400);
 
   const domain = await c.env.DB.prepare('SELECT * FROM domains WHERE id = ?').bind(domainId).first<{ id: number; domain: string }>();
   if (!domain) {
@@ -364,6 +406,10 @@ domains.post('/:id/verify', requireRole('super_admin'), async (c) => {
 // ========== 删除域名 ==========
 domains.delete('/:id', requireRole('super_admin'), async (c) => {
   const domainId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(domainId)) return jsonResponse({ error: '无效的域名 ID' }, 400);
+
+  const existing = await c.env.DB.prepare('SELECT id FROM domains WHERE id = ?').bind(domainId).first();
+  if (!existing) return jsonResponse({ error: '域名不存在' }, 404);
 
   // 删除前取出受影响的短码，用于清理跳转缓存
   const affected = await c.env.DB.prepare('SELECT short_code FROM short_links WHERE domain_id = ?')

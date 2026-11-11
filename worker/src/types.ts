@@ -19,88 +19,20 @@ export interface Env {
   WORKER_HOST?: string;
   // 允许跨域访问的来源白名单（逗号分隔）。默认不放开跨域；同源部署无需配置
   CORS_ALLOWED_ORIGINS?: string;
+  // IP 限流阈值（可选，运维调优用）：
+  // 同一 IP 窗口内认证失败次数上限 / 窗口秒数（默认 10 次 / 900 秒）
+  RATE_LIMIT_LOGIN_FAIL_MAX?: string;
+  RATE_LIMIT_LOGIN_FAIL_WINDOW?: string;
+  // 同一 IP 窗口内验证码发送次数上限 / 窗口秒数（默认 20 次 / 600 秒）
+  RATE_LIMIT_SEND_IP_MAX?: string;
+  RATE_LIMIT_SEND_IP_WINDOW?: string;
 }
 
 // 用户角色（项目组管理员由 user_group_relations.role = 'admin' 表达）
 export type UserRole = 'super_admin' | 'user';
-export type UserStatus = 'active' | 'disabled';
-// 审核方式：auto = 组管理员优先并逐级向上；parent = 父组管理员；super_admin = 始终由超级管理员审核
-export type ReviewBy = 'auto' | 'parent' | 'super_admin';
 
-export interface User {
-  id: number;
-  email: string;
-  password_hash: string;
-  name: string;
-  role: UserRole;
-  status: UserStatus;
-  require_review: number;
-  review_by: ReviewBy;
-  last_login_at: number | null;
-  last_login_ip: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ProjectGroup {
-  id: number;
-  name: string;
-  description: string | null;
-  parent_id: number | null;
-  created_by: number;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface Domain {
-  id: number;
-  domain: string;
-  type: 'short_link' | 'admin' | 'both';
-  is_default_short_link: number;
-  status: 'active' | 'disabled' | 'pending_verification';
-  added_by: number;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ShortLink {
-  id: number;
-  short_code: string;
-  target_url: string;
-  name: string;
-  custom_alias: string | null;
-  status: 'active' | 'disabled' | 'expired';
-  redirect_type: number;
-  password: string | null;
-  created_by: number;
-  group_id: number | null;
-  domain_id: number | null;
-  expires_at: number | null;
-  click_count: number;
-  review_status: 'approved' | 'pending' | 'rejected';
-  review_note: string | null;
-  reviewed_by: number | null;
-  reviewed_at: number | null;
-  review_group_id: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface AuditLog {
-  id: number;
-  user_id: number | null;
-  user_email?: string | null;
-  user_name?: string | null;
-  action: string;
-  target_type: string | null;
-  target_id: number | null;
-  detail: string | null;
-  ip: string | null;
-  ip_hash: string | null;
-  /** IP 归属地（Cloudflare 边缘解析，迁移 0008 前为 null） */
-  location?: string | null;
-  timestamp: number;
-}
+// 数据表结构以 migrations/*.sql 为准；路由内按需声明行类型，
+// 不再维护与表结构易漂移的实体接口（历史上的 User/ShortLink 等已移除）。
 
 // JWT Payload
 export interface JWTPayload {

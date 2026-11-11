@@ -82,6 +82,7 @@ profile.put('/', async (c) => {
 
   // 用户名
   if (body.name !== undefined) {
+    if (typeof body.name !== 'string') return jsonResponse({ error: '用户名格式不正确' }, 400);
     const name = body.name.trim();
     if (!name) return jsonResponse({ error: '用户名不能为空' }, 400);
     if (name.length > NAME_MAX_LENGTH) {
@@ -96,6 +97,7 @@ profile.put('/', async (c) => {
 
   // 邮箱（需要新邮箱收到的验证码）
   if (body.email !== undefined) {
+    if (typeof body.email !== 'string') return jsonResponse({ error: '邮箱格式不正确' }, 400);
     const email = body.email.trim().toLowerCase();
     if (!EMAIL_PATTERN.test(email)) {
       return jsonResponse({ error: '邮箱格式不正确' }, 400);
@@ -122,9 +124,12 @@ profile.put('/', async (c) => {
         return jsonResponse({ error: '验证码错误或已过期' }, 400);
       }
 
-      await c.env.DB.prepare('UPDATE verification_codes SET used = 1 WHERE id = ?')
-        .bind(codeRecord.id)
-        .run();
+      const consumed = await c.env.DB.prepare(
+        'UPDATE verification_codes SET used = 1 WHERE id = ? AND used = 0'
+      ).bind(codeRecord.id).run();
+      if (Number(consumed.meta.changes || 0) === 0) {
+        return jsonResponse({ error: '验证码已使用，请重新获取' }, 400);
+      }
 
       updates.push('email = ?');
       params.push(email);
@@ -179,7 +184,7 @@ profile.post('/email-code', async (c) => {
   if (!user) return jsonResponse({ error: '用户不存在' }, 404);
 
   const body = await c.req.json<{ email?: string }>();
-  const email = (body.email || '').trim().toLowerCase();
+  const email = (typeof body.email === 'string' ? body.email : '').trim().toLowerCase();
 
   if (!EMAIL_PATTERN.test(email)) {
     return jsonResponse({ error: '邮箱格式不正确' }, 400);
@@ -235,6 +240,12 @@ profile.put('/password', async (c) => {
   if (!user) return jsonResponse({ error: '用户不存在' }, 404);
 
   const body = await c.req.json<{ old_password?: string; new_password?: string }>();
+  if (body.new_password !== undefined && typeof body.new_password !== 'string') {
+    return jsonResponse({ error: '新密码格式不正确' }, 400);
+  }
+  if (body.old_password !== undefined && typeof body.old_password !== 'string') {
+    return jsonResponse({ error: '当前密码格式不正确' }, 400);
+  }
   const newPassword = body.new_password || '';
 
   if (!newPassword) {

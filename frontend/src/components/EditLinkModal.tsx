@@ -1,10 +1,11 @@
 // 短链编辑弹窗与表单公共控件：
 // 短链管理与项目组内短链共用同一套编辑体验，避免两处实现漂移。
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { domainsApi, groupsApi, linksApi } from '@/lib/api'
 import type { ProjectGroup, ShortLink } from '@/lib/types'
 import { Button, ErrorText, Input, Label, Modal, Select } from '@/components/ui'
 import { useToast } from '@/components/Toast'
+import { flattenGroupTree } from '@/lib/groups'
 import { cn, localInputToTimestamp, timestampToLocalInput } from '@/lib/utils'
 
 interface EditLinkForm {
@@ -111,17 +112,6 @@ export function ExpiryField({
   )
 }
 
-export function flattenGroups(groups: ProjectGroup[], depth = 0): { id: number; label: string }[] {
-  const result: { id: number; label: string }[] = []
-  for (const g of groups) {
-    result.push({ id: g.id, label: `${'　'.repeat(depth)}${g.name}` })
-    if (g.children && g.children.length > 0) {
-      result.push(...flattenGroups(g.children, depth + 1))
-    }
-  }
-  return result
-}
-
 interface EditLinkModalProps {
   link: ShortLink | null
   groups: ProjectGroup[]
@@ -138,8 +128,10 @@ export function EditLinkModal({ link, groups, onClose, onSaved }: EditLinkModalP
   const [clearPassword, setClearPassword] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // 域名请求序号：快速切换项目组时丢弃过期响应
+  const domainRequestRef = useRef(0)
 
-  const groupOptions = useMemo(() => flattenGroups(groups), [groups])
+  const groupOptions = useMemo(() => flattenGroupTree(groups), [groups])
 
   useEffect(() => {
     if (!link) return
@@ -160,6 +152,7 @@ export function EditLinkModal({ link, groups, onClose, onSaved }: EditLinkModalP
     // 只加载当前用户有权限使用的域名
     setDomains([])
     setDomainsLoading(true)
+    domainRequestRef.current += 1
     let cancelled = false
     const request = link.group_id
       ? groupsApi.availableDomains(link.group_id)
@@ -179,6 +172,26 @@ export function EditLinkModal({ link, groups, onClose, onSaved }: EditLinkModalP
       cancelled = true
     }
   }, [link])
+
+  // 切换项目组后重新加载该组可用域名；域名留空时由后端自动切换到新组默认域名
+  const handleGroupChange = (nextGroupId: string) => {
+    setForm({ ...form, group_id: nextGroupId, domain_id: '' })
+    const seq = ++domainRequestRef.current
+    setDomainsLoading(true)
+    const request = nextGroupId
+      ? groupsApi.availableDomains(Number(nextGroupId))
+      : domainsApi.shortLinkDomains()
+    request
+      .then((data) => {
+        if (seq === domainRequestRef.current) setDomains(data.domains)
+      })
+      .catch(() => {
+        if (seq === domainRequestRef.current) setDomains([])
+      })
+      .finally(() => {
+        if (seq === domainRequestRef.current) setDomainsLoading(false)
+      })
+  }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -219,9 +232,15 @@ export function EditLinkModal({ link, groups, onClose, onSaved }: EditLinkModalP
         redirect_type: Number(form.redirect_type),
       }
 
-      // 仅当用户主动修改域名时才提交，避免无权限域名影响保存
-      if (form.domain_id !== originalDomainId) {
-        payload.domain_id = form.domain_id ? Number(form.domain_id) : null
+      const groupChanged = form.group_id !== (link.group_id ? String(link.group_id) : '')
+      // 仅当用户主动修改域名时才提交，避免无权限域名影响保存；
+      // 切换项目组且未选域名时交给后端自动切换到新组默认域名。
+      if (form.domain_id) {
+        if (form.domain_id !== originalDomainId || groupChanged) {
+          payload.domain_id = Number(form.domain_id)
+        }
+      } else if (!groupChanged && originalDomainId) {
+        payload.domain_id = null
       }
       // 密码留空表示不修改；勾选清除才置空
       if (form.password) {
@@ -318,7 +337,7 @@ export function EditLinkModal({ link, groups, onClose, onSaved }: EditLinkModalP
             <Select
               id="edit-group"
               value={form.group_id}
-              onChange={(e) => setForm({ ...form, group_id: e.target.value })}
+              onChange={(e) => handleGroupChange(e.target.value)}
             >
               <option value="">不归属项目组</option>
               {groupOptions.map((g) => (

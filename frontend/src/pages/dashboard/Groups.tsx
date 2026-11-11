@@ -44,19 +44,11 @@ import { EditLinkModal } from '@/components/EditLinkModal'
 import { PermissionEditor } from '@/components/PermissionEditor'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
+import { flattenGroupTree } from '@/lib/groups'
 import { can, defaultPermissionMap, diffFromDefaults, GROUP_PERMISSION_DEFS } from '@/lib/permissions'
 import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-function flattenGroups(groups: ProjectGroup[], depth = 0): { id: number; label: string }[] {
-  const result: { id: number; label: string }[] = []
-  for (const g of groups) {
-    result.push({ id: g.id, label: `${'— '.repeat(depth)}${g.name}` })
-    if (g.children?.length) result.push(...flattenGroups(g.children, depth + 1))
-  }
-  return result
-}
 
 function GroupNode({
   group,
@@ -180,7 +172,7 @@ export default function Groups() {
   const [bindableDomains, setBindableDomains] = useState<{ id: number; domain: string; status?: string }[]>([])
   const [bindablesLoading, setBindablesLoading] = useState(false)
 
-  const flatGroups = useMemo(() => flattenGroups(groups), [groups])
+  const flatGroups = useMemo(() => flattenGroupTree(groups, { indent: '— ' }), [groups])
 
   const loadGroups = useCallback(async () => {
     setLoading(true)
@@ -445,9 +437,11 @@ export default function Groups() {
   const canViewMemberDetail = isSuperAdmin || detail?.can_view_member_detail === true || canConfigMemberPerm
   const canCreateChild = isSuperAdmin || can(detail?.permissions, 'group.create_child')
   const canManageDomain = isSuperAdmin || can(detail?.permissions, 'group.domain.manage')
-  // 删除：超管可删任意组；组管理员只能删自己管理组下的子组（需「删除子组」权限）
+  // 删除：超管可删任意组；组管理员只能删自己管理组下的子组（需「删除子组」权限），
+  // 且不能删除自己直接管理的组（后端同样会拒绝）
   const canDeleteGroup =
-    isSuperAdmin || (!!detail?.group.parent_id && can(detail?.permissions, 'group.delete'))
+    isSuperAdmin
+    || (!!detail?.group.parent_id && !detail?.is_direct_admin && can(detail?.permissions, 'group.delete'))
 
   const openMemberModal = () => {
     setMemberRole('member')
@@ -530,8 +524,8 @@ export default function Groups() {
 
       {error && <ErrorText>{error}</ErrorText>}
 
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-        <Card className="p-3">
+      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <Card className="p-3 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto lg:self-start">
           <p className="px-2 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400">项目组结构</p>
           {loading ? (
             <LoadingBlock />
@@ -542,7 +536,7 @@ export default function Groups() {
               <EmptyState title="当前暂无项目组" description="你还没有被加入任何项目组，请联系管理员" />
             )
           ) : (
-            <div className="space-y-0.5">
+            <div className="max-h-56 space-y-0.5 overflow-y-auto pr-1 lg:max-h-none lg:overflow-visible">
               {groups.map((g) => (
                 <GroupNode key={g.id} group={g} selectedId={selectedId} onSelect={setSelectedId} />
               ))}
@@ -566,37 +560,38 @@ export default function Groups() {
                   title={detail.group.name}
                   description={detail.group.description || '暂无描述'}
                   action={
-                    <div className="flex flex-wrap gap-2">
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                       {/* 超级管理员与项目组（含父组）管理员均可编辑组名称/描述 */}
                       {(isSuperAdmin || canManageSelected) && (
-                        <Button variant="outline" size="sm" onClick={openEditModal}>
+                        <Button className="w-full sm:w-auto" variant="outline" size="sm" onClick={openEditModal}>
                           <Pencil className="h-4 w-4" />
                           编辑
                         </Button>
                       )}
                       {/* 超级管理员与项目组（含父组）管理员均可添加成员 */}
                       {(isSuperAdmin || canManageMembers) && (
-                        <Button variant="outline" size="sm" onClick={openMemberModal}>
+                        <Button className="w-full sm:w-auto" variant="outline" size="sm" onClick={openMemberModal}>
                           <UserPlus className="h-4 w-4" />
                           添加成员
                         </Button>
                       )}
                       {/* 项目组管理员可在自己管理的组下创建子组 */}
                       {canCreateChild && (
-                        <Button variant="outline" size="sm" onClick={() => openCreateModal(detail.group.id)}>
+                        <Button className="w-full sm:w-auto" variant="outline" size="sm" onClick={() => openCreateModal(detail.group.id)}>
                           <FolderPlus className="h-4 w-4" />
                           新建子组
                         </Button>
                       )}
                       {/* 超管可绑定任意域名；项目组管理员只能复用自己管理范围内已有的域名 */}
                       {canManageDomain && (
-                        <Button variant="outline" size="sm" onClick={() => void openDomainModal()}>
+                        <Button className="w-full sm:w-auto" variant="outline" size="sm" onClick={() => void openDomainModal()}>
                           <Globe className="h-4 w-4" />
                           绑定域名
                         </Button>
                       )}
                       {canDeleteGroup && (
                         <Button
+                          className="w-full sm:w-auto"
                           variant="danger"
                           size="sm"
                           onClick={() => setDeletingGroupId(detail.group.id)}
@@ -613,7 +608,7 @@ export default function Groups() {
                     </div>
                   }
                 />
-                <div className="grid gap-3 p-5 text-sm sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-4 sm:p-5">
                   <div>
                     <p className="text-xs text-gray-400">成员数</p>
                     <p className="mt-1 font-medium text-gray-900 dark:text-gray-100">{detail.members.length}</p>
@@ -651,7 +646,7 @@ export default function Groups() {
                     }
                   />
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto overscroll-x-contain">
                     <table className="w-full min-w-[640px] text-sm">
                       <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                         <tr>
@@ -740,8 +735,8 @@ export default function Groups() {
                       const canEditPerm = canConfigMemberPerm && (!isSelf || isSuperAdmin)
                       const enabledPerms = Object.keys(m.permissions || {}).filter((k) => m.permissions?.[k]).length
                       return (
-                        <li key={m.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                          <div className="min-w-0 flex-1">
+                        <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 sm:gap-3 sm:px-5">
+                          <div className="min-w-0 basis-full sm:flex-1">
                             <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                               {m.name} <span className="text-xs font-normal text-gray-400">{m.email}</span>
                             </p>
@@ -761,7 +756,7 @@ export default function Groups() {
                             {m.group_role === 'admin' ? '组管理员' : '成员'}
                           </Badge>
                           <StatusBadge status={m.status} />
-                          <div className="flex items-center gap-1">
+                          <div className="ml-auto flex items-center gap-1 sm:ml-0">
                             {canViewMemberDetail && (
                               <button
                                 onClick={() => void openMemberOverview(m)}
@@ -839,9 +834,9 @@ export default function Groups() {
                 ) : (
                   <ul className="divide-y divide-gray-100 dark:divide-gray-800">
                     {detail.domains.map((d) => (
-                      <li key={d.id} className="flex items-center gap-3 px-5 py-3">
-                        <Globe className="h-4 w-4 text-gray-400" />
-                        <span className="flex-1 text-sm text-gray-900 dark:text-gray-100">{d.domain}</span>
+                      <li key={d.id} className="flex items-center gap-3 px-4 py-3 sm:px-5">
+                        <Globe className="h-4 w-4 shrink-0 text-gray-400" />
+                        <span className="min-w-0 flex-1 truncate text-sm text-gray-900 dark:text-gray-100" title={d.domain}>{d.domain}</span>
                         <StatusBadge status={d.status} />
                         {canManageDomain && (
                           <button
@@ -872,8 +867,8 @@ export default function Groups() {
                 ) : (
                   <ul className="divide-y divide-gray-100 dark:divide-gray-800">
                     {detail.subGroups.map((g) => (
-                      <li key={g.id} className="flex items-center justify-between px-5 py-3">
-                        <span className="text-sm text-gray-900 dark:text-gray-100">{g.name}</span>
+                      <li key={g.id} className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
+                        <span className="min-w-0 truncate text-sm text-gray-900 dark:text-gray-100">{g.name}</span>
                         <Button variant="ghost" size="sm" onClick={() => setSelectedId(g.id)}>
                           查看
                         </Button>

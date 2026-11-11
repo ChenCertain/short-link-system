@@ -1,7 +1,7 @@
 // 操作审计路由（超级管理员，或被授予全局权限 audit.view 的账号）
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { jsonResponse } from '../utils';
+import { jsonResponse, parseIntClamped } from '../utils';
 import { authMiddleware, requireGlobalPermission } from '../middleware';
 
 const audit = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
@@ -10,8 +10,8 @@ audit.use('*', authMiddleware);
 
 // 审计日志列表（支持按操作类型、操作人筛选）
 audit.get('/', requireGlobalPermission('audit.view'), async (c) => {
-  const page = Math.max(1, parseInt(c.req.query('page') || '1'));
-  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') || '30')));
+  const page = parseIntClamped(c.req.query('page'), 1, 1, 1_000_000);
+  const pageSize = parseIntClamped(c.req.query('pageSize'), 30, 1, 100);
   const action = c.req.query('action') || '';
   const userId = c.req.query('userId') || '';
   const keyword = (c.req.query('keyword') || '').trim();

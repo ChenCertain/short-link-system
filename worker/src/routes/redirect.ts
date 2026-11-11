@@ -94,6 +94,8 @@ async function queryLinkForHost(
        LEFT JOIN domains d ON sl.domain_id = d.id
        WHERE sl.short_code = ?
          AND COALESCE(sl.domain_id, 0) = COALESCE((SELECT id FROM domains WHERE domain = ? LIMIT 1), 0)
+         -- 域名被停用或改为「仅管理」后，该域名下的短链不再可访问
+         AND (sl.domain_id IS NULL OR (d.status = 'active' AND d.type IN ('short_link', 'both')))
        LIMIT 1`
     )
     .bind(code, host)

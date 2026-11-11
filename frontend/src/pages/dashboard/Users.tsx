@@ -31,20 +31,11 @@ import { PermissionEditor } from '@/components/PermissionEditor'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { actionLabel, describeDetail, targetTypeLabel } from '@/lib/audit'
+import { flattenGroupTree } from '@/lib/groups'
 import { GLOBAL_PERMISSION_DEFS } from '@/lib/permissions'
 import { formatDateTime, ROLE_LABELS } from '@/lib/utils'
 
 type DetailTab = 'overview' | 'links' | 'logs' | 'permissions'
-
-/** 把组树拍平为「带缩进的下拉选项」 */
-function flattenGroupOptions(groups: ProjectGroup[], depth = 0): { id: number; label: string }[] {
-  const result: { id: number; label: string }[] = []
-  for (const group of groups) {
-    result.push({ id: group.id, label: `${'　'.repeat(depth)}${depth > 0 ? '└ ' : ''}${group.name}` })
-    if (group.children?.length) result.push(...flattenGroupOptions(group.children, depth + 1))
-  }
-  return result
-}
 
 const roleTone = (role: string) => (role === 'super_admin' ? 'purple' : 'gray') as 'purple' | 'gray'
 
@@ -184,7 +175,7 @@ export default function Users() {
       .list()
       .then((data) => {
         setGroups(data.groups)
-        setGroupOptions(flattenGroupOptions(data.groups))
+        setGroupOptions(flattenGroupTree(data.groups, { arrow: true }))
       })
       .catch(() => undefined)
   }, [isSuperAdmin])
@@ -391,7 +382,7 @@ export default function Users() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">用户管理</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            共 {total} 位用户 · 账户只能由超级管理员创建，项目组管理员在项目组内设置
+            共 {total} 位用户 · 具备「用户管理」权限的账号可创建普通用户，项目组成员在项目组内设置
           </p>
           <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
             最高权限账户（站点初始化时创建的超级管理员）可以管理其他超级管理员，其他超级管理员不能修改或移除它
@@ -515,7 +506,11 @@ export default function Users() {
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {users.map((u) => {
                     const isRootUser = u.is_root === 1 || u.is_root === true
-                    const rootLocked = isRootUser && !isRoot
+                    // 最高权限账户只能本人维护；其他超级管理员只能由最高权限账户维护
+                    const rootLocked =
+                      (isRootUser && !isRoot)
+                      || (u.role === 'super_admin' && !isRoot && u.id !== user?.id)
+                      || (u.role === 'super_admin' && !isSuperAdmin)
                     return (
                     <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                       <td className="px-4 py-3">
@@ -711,11 +706,13 @@ export default function Users() {
               onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as UserRole })}
             >
               <option value="user">普通用户</option>
-              <option value="super_admin">超级管理员</option>
+              <option value="super_admin" disabled={!isSuperAdmin}>
+                超级管理员{!isSuperAdmin ? '（仅超级管理员可创建）' : ''}
+              </option>
             </Select>
           </div>
 
-          {createForm.role === 'user' && (
+          {isSuperAdmin && createForm.role === 'user' && (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <Label htmlFor="u-group">所属项目组</Label>
@@ -823,6 +820,7 @@ export default function Users() {
               <Select
                 id="e-role"
                 value={editForm.role}
+                disabled={!isSuperAdmin}
                 onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
               >
                 <option value="user" disabled={editing?.is_root === 1 || editing?.is_root === true}>
@@ -1108,7 +1106,9 @@ export default function Users() {
                                   <button
                                     onClick={() =>
                                       window.open(
-                                        `https://${l.domain_name || window.location.host}/${l.short_code}`,
+                                        l.domain_name
+                                          ? `https://${l.domain_name}/${l.short_code}`
+                                          : `${window.location.origin}/${l.short_code}`,
                                         '_blank',
                                         'noopener',
                                       )

@@ -2,7 +2,14 @@
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { jsonResponse, generateShortCode, hashPassword, validateAlias, isSafeHttpUrl } from '../utils';
+import {
+  jsonResponse,
+  generateShortCode,
+  hashPassword,
+  validateAlias,
+  isSafeHttpUrl,
+  parseIntClamped,
+} from '../utils';
 import { authMiddleware, requireRole, logAudit } from '../middleware';
 import { invalidateLinkCache } from '../cache';
 import {
@@ -21,11 +28,30 @@ import {
 
 const links = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
+// 返回给前端的短链字段：显式列出，避免 SELECT * 把 password 哈希带到接口响应里
+const LINK_PUBLIC_COLUMNS = `sl.id, sl.short_code, sl.target_url, sl.name, sl.custom_alias, sl.status,
+  sl.redirect_type, sl.created_by, sl.group_id, sl.domain_id, sl.expires_at, sl.click_count,
+  sl.review_status, sl.review_note, sl.reviewed_by, sl.reviewed_at, sl.review_group_id,
+  sl.created_at, sl.updated_at,
+  CASE WHEN sl.password IS NOT NULL AND sl.password <> '' THEN 1 ELSE 0 END AS has_password`;
+
+/** 读取系统设置中的默认跳转类型（缺失或非法时回退 302） */
+async function getDefaultRedirectType(db: D1Database): Promise<number> {
+  try {
+    const row = await db
+      .prepare("SELECT value FROM system_config WHERE key = 'default_redirect_type'")
+      .first<{ value: string }>();
+    return row?.value === '301' ? 301 : 302;
+  } catch {
+    return 302;
+  }
+}
+
 // ========== 获取短链列表 ==========
 links.get('/', authMiddleware, async (c) => {
   const currentUser = c.get('user');
-  const page = parseInt(c.req.query('page') || '1');
-  const pageSize = parseInt(c.req.query('pageSize') || '20');
+  const page = parseIntClamped(c.req.query('page'), 1, 1, 1_000_000);
+  const pageSize = parseIntClamped(c.req.query('pageSize'), 20, 1, 100);
   const search = c.req.query('search') || '';
   const status = c.req.query('status') || '';
   const groupId = c.req.query('groupId');
@@ -41,7 +67,7 @@ links.get('/', authMiddleware, async (c) => {
     LEFT JOIN project_groups pg ON sl.group_id = pg.id
   `;
   let query = `
-    SELECT sl.*, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
+    SELECT ${LINK_PUBLIC_COLUMNS}, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
       pg.name as group_name
     ${fromClause}
   `;
@@ -106,13 +132,19 @@ links.get('/', authMiddleware, async (c) => {
   }
 
   if (domainId) {
-    conditions.push('sl.domain_id = ?');
-    params.push(parseInt(domainId));
+    const parsedDomainId = Number.parseInt(domainId, 10);
+    if (Number.isFinite(parsedDomainId)) {
+      conditions.push('sl.domain_id = ?');
+      params.push(parsedDomainId);
+    }
   }
 
   if (creatorId) {
-    conditions.push('sl.created_by = ?');
-    params.push(parseInt(creatorId));
+    const parsedCreatorId = Number.parseInt(creatorId, 10);
+    if (Number.isFinite(parsedCreatorId)) {
+      conditions.push('sl.created_by = ?');
+      params.push(parsedCreatorId);
+    }
   }
 
   // 自动标记过期
@@ -213,7 +245,7 @@ links.get('/pending-reviews', authMiddleware, async (c) => {
   const currentUser = c.get('user');
 
   let sql = `
-    SELECT sl.*, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
+    SELECT ${LINK_PUBLIC_COLUMNS}, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
       pg.name as group_name, rg.name as review_group_name
     FROM short_links sl
     LEFT JOIN domains d ON sl.domain_id = d.id
@@ -324,13 +356,35 @@ links.post('/', authMiddleware, async (c) => {
     redirect_type?: number;
   }>();
 
-  if (!body.target_url) {
+  if (typeof body.target_url !== 'string' || !body.target_url.trim()) {
     return jsonResponse({ error: '请填写目标链接' }, 400);
   }
+  body.target_url = body.target_url.trim();
 
   // 验证 URL（仅允许 http/https，拒绝 javascript:、data: 等协议）
   if (!isSafeHttpUrl(body.target_url)) {
     return jsonResponse({ error: '目标链接格式不正确，仅支持 http:// 或 https://' }, 400);
+  }
+  if (body.name !== undefined && typeof body.name !== 'string') {
+    return jsonResponse({ error: '名称格式不正确' }, 400);
+  }
+  if (body.custom_alias !== undefined && typeof body.custom_alias !== 'string') {
+    return jsonResponse({ error: '自定义别名格式不正确' }, 400);
+  }
+  if (body.password !== undefined && (typeof body.password !== 'string' || body.password.length > 128)) {
+    return jsonResponse({ error: '访问密码格式不正确（最长 128 个字符）' }, 400);
+  }
+  if (body.group_id !== undefined && (!Number.isInteger(body.group_id) || body.group_id <= 0)) {
+    return jsonResponse({ error: '项目组 ID 不正确' }, 400);
+  }
+  if (body.domain_id !== undefined && (!Number.isInteger(body.domain_id) || body.domain_id <= 0)) {
+    return jsonResponse({ error: '域名 ID 不正确' }, 400);
+  }
+  if (body.expires_at !== undefined && (!Number.isInteger(body.expires_at) || body.expires_at <= 0)) {
+    return jsonResponse({ error: '过期时间格式不正确' }, 400);
+  }
+  if (body.redirect_type !== undefined && body.redirect_type !== 301 && body.redirect_type !== 302) {
+    return jsonResponse({ error: '跳转类型只能是 301 或 302' }, 400);
   }
 
   // 如果指定了项目组，检查权限
@@ -443,7 +497,10 @@ links.post('/', authMiddleware, async (c) => {
     passwordHash = await hashPassword(body.password);
   }
 
-  const redirectType = body.redirect_type === 301 ? 301 : 302;
+  // 显式指定优先；未指定时使用「系统设置 → 默认跳转类型」，而不是写死 302
+  const redirectType = body.redirect_type === 301 || body.redirect_type === 302
+    ? body.redirect_type
+    : await getDefaultRedirectType(c.env.DB);
 
   // 是否需要审核（超级管理员创建的短链始终直接通过）
   let requireReview = false;
@@ -466,14 +523,23 @@ links.post('/', authMiddleware, async (c) => {
   }
   const reviewStatus = requireReview ? 'pending' : 'approved';
 
-  const result = await c.env.DB.prepare(
-    `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, password, created_by, group_id, domain_id, expires_at, review_status, review_group_id)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    shortCode, body.target_url, body.name || '', body.custom_alias || null,
-    redirectType, passwordHash, currentUser.user_id, body.group_id || null,
-    body.domain_id ?? null, body.expires_at ?? null, reviewStatus, reviewGroupId
-  ).run();
+  let result: D1Result;
+  try {
+    result = await c.env.DB.prepare(
+      `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, password, created_by, group_id, domain_id, expires_at, review_status, review_group_id)
+       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      shortCode, body.target_url, body.name || '', body.custom_alias || null,
+      redirectType, passwordHash, currentUser.user_id, body.group_id || null,
+      body.domain_id ?? null, body.expires_at ?? null, reviewStatus, reviewGroupId
+    ).run();
+  } catch {
+    // 并发创建时仍可能撞唯一索引，返回可读的冲突提示而不是 500
+    return jsonResponse(
+      { error: body.custom_alias ? '该自定义别名已被使用' : '短码生成冲突，请重试' },
+      409,
+    );
+  }
 
   const linkId = result.meta.last_row_id;
 
@@ -521,10 +587,11 @@ links.post('/', authMiddleware, async (c) => {
 // ========== 获取短链详情 ==========
 links.get('/:id', authMiddleware, async (c) => {
   const linkId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(linkId)) return jsonResponse({ error: '无效的短链 ID' }, 400);
   const currentUser = c.get('user');
 
   const link = await c.env.DB.prepare(
-    `SELECT sl.*, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
+    `SELECT ${LINK_PUBLIC_COLUMNS}, d.domain as domain_name, u.name as creator_name, u.email as creator_email,
       pg.name as group_name
      FROM short_links sl
      LEFT JOIN domains d ON sl.domain_id = d.id
@@ -558,18 +625,47 @@ links.get('/:id', authMiddleware, async (c) => {
 // ========== 更新短链 ==========
 links.put('/:id', authMiddleware, async (c) => {
   const linkId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(linkId)) return jsonResponse({ error: '无效的短链 ID' }, 400);
   const currentUser = c.get('user');
   const body = await c.req.json<{
     target_url?: string;
     name?: string;
     status?: 'active' | 'disabled';
     password?: string;
-    expires_at?: number;
+    expires_at?: number | null;
     redirect_type?: number;
     group_id?: number | null;
     domain_id?: number | null;
     short_code?: string;
   }>();
+
+  if (body.short_code !== undefined && typeof body.short_code !== 'string') {
+    return jsonResponse({ error: '自定义别名格式不正确' }, 400);
+  }
+  if (body.name !== undefined && typeof body.name !== 'string') {
+    return jsonResponse({ error: '名称格式不正确' }, 400);
+  }
+  if (body.password !== undefined && (typeof body.password !== 'string' || body.password.length > 128)) {
+    return jsonResponse({ error: '访问密码格式不正确（最长 128 个字符）' }, 400);
+  }
+  if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
+    return jsonResponse({ error: '状态只能是 active 或 disabled' }, 400);
+  }
+  if (body.redirect_type !== undefined && body.redirect_type !== 301 && body.redirect_type !== 302) {
+    return jsonResponse({ error: '跳转类型只能是 301 或 302' }, 400);
+  }
+  if (body.expires_at !== undefined && body.expires_at !== null
+    && (!Number.isInteger(body.expires_at) || body.expires_at <= 0)) {
+    return jsonResponse({ error: '过期时间格式不正确' }, 400);
+  }
+  if (body.group_id !== undefined && body.group_id !== null
+    && (!Number.isInteger(body.group_id) || body.group_id <= 0)) {
+    return jsonResponse({ error: '项目组 ID 不正确' }, 400);
+  }
+  if (body.domain_id !== undefined && body.domain_id !== null
+    && (!Number.isInteger(body.domain_id) || body.domain_id <= 0)) {
+    return jsonResponse({ error: '域名 ID 不正确' }, 400);
+  }
 
   const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{
     id: number;
@@ -589,16 +685,21 @@ links.put('/:id', authMiddleware, async (c) => {
     return jsonResponse({ error: '权限不足，只有创建者或项目组管理员可以修改' }, 403);
   }
 
+  // 目标项目组：仅在「所属项目组真的发生变化」时校验创建权限与域名归属。
+  // 前端编辑弹窗总会带上 group_id，若每次都要求 link.create，编辑自己短链的权限会被误伤。
+  const targetGroupId = body.group_id !== undefined ? body.group_id ?? null : link.group_id;
+  const groupChanged = targetGroupId !== link.group_id;
+
   // 变更所属项目组时校验成员身份，并确保域名仍属于新项目组的可用域名
   let domainOverride: number | null = null;
-  if (body.group_id !== undefined && body.group_id !== null) {
+  if (groupChanged && targetGroupId !== null) {
     if (currentUser.role !== 'super_admin'
-      && !await isGroupMember(c.env.DB, currentUser.user_id, body.group_id)
-      && !await isGroupAdminOf(c.env.DB, currentUser.user_id, body.group_id)) {
+      && !await isGroupMember(c.env.DB, currentUser.user_id, targetGroupId)
+      && !await isGroupAdminOf(c.env.DB, currentUser.user_id, targetGroupId)) {
       return jsonResponse({ error: '您不在该项目组中' }, 403);
     }
     if (currentUser.role !== 'super_admin'
-      && !(await hasGroupPermission(c.env.DB, currentUser.user_id, body.group_id, 'link.create'))) {
+      && !(await hasGroupPermission(c.env.DB, currentUser.user_id, targetGroupId, 'link.create'))) {
       return jsonResponse({ error: '你没有在该项目组创建短链的权限' }, 403);
     }
 
@@ -607,7 +708,7 @@ links.put('/:id', authMiddleware, async (c) => {
        JOIN group_domain_relations gdr ON d.id = gdr.domain_id
        WHERE gdr.group_id = ? AND d.type IN ('short_link', 'both') AND d.status = 'active'
        ORDER BY d.is_default_short_link DESC, d.id ASC`
-    ).bind(body.group_id).all<{ id: number }>();
+    ).bind(targetGroupId).all<{ id: number }>();
 
     if (available.results.length === 0) {
       return jsonResponse({ error: '该项目组暂无可用域名，请联系超级管理员绑定域名' }, 400);
@@ -618,8 +719,7 @@ links.put('/:id', authMiddleware, async (c) => {
     }
   }
 
-  // 目标项目组与目标域名（用于别名唯一性与域名权限校验）
-  const targetGroupId = body.group_id !== undefined ? body.group_id || null : link.group_id;
+  // 目标域名（用于别名唯一性与域名权限校验）
   const targetDomainId = body.domain_id !== undefined ? body.domain_id ?? null : (domainOverride ?? link.domain_id);
 
   // 修改域名：必须可用，且只允许选择有权限的域名
@@ -678,19 +778,29 @@ links.put('/:id', authMiddleware, async (c) => {
     }
   }
 
-  if (body.target_url) {
-    if (!isSafeHttpUrl(body.target_url)) {
+  if (body.target_url !== undefined) {
+    if (typeof body.target_url !== 'string' || !body.target_url.trim()) {
+      return jsonResponse({ error: '请填写目标链接' }, 400);
+    }
+    const targetUrl = body.target_url.trim();
+    if (!isSafeHttpUrl(targetUrl)) {
       return jsonResponse({ error: '目标链接格式不正确，仅支持 http:// 或 https://' }, 400);
     }
-    updates.push('target_url = ?'); params.push(body.target_url);
+    updates.push('target_url = ?'); params.push(targetUrl);
   }
   if (body.name !== undefined) { updates.push('name = ?'); params.push(body.name); }
-  if (body.status) { updates.push('status = ?'); params.push(body.status); }
-  if (body.redirect_type) { updates.push('redirect_type = ?'); params.push(body.redirect_type === 301 ? 301 : 302); }
-  if (body.expires_at !== undefined) { updates.push('expires_at = ?'); params.push(body.expires_at || null); }
+  if (body.status !== undefined) { updates.push('status = ?'); params.push(body.status); }
+  if (body.redirect_type !== undefined) {
+    updates.push('redirect_type = ?');
+    params.push(body.redirect_type === 301 ? 301 : 302);
+  }
+  if (body.expires_at !== undefined) {
+    updates.push('expires_at = ?');
+    params.push(body.expires_at ?? null);
+  }
   if (body.group_id !== undefined) {
     updates.push('group_id = ?');
-    params.push(body.group_id || null);
+    params.push(targetGroupId);
   }
   // 域名：显式指定优先，其次跟随项目组自动切换
   if (body.domain_id !== undefined) {
@@ -735,7 +845,12 @@ links.put('/:id', authMiddleware, async (c) => {
   updates.push('updated_at = ?');
   params.push(Math.floor(Date.now() / 1000), linkId);
 
-  await c.env.DB.prepare(`UPDATE short_links SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+  try {
+    await c.env.DB.prepare(`UPDATE short_links SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+  } catch {
+    // 并发下别名可能被其他请求占用
+    return jsonResponse({ error: '该别名已被使用，请更换后重试' }, 409);
+  }
 
   await logAudit(
     c.env.DB,
@@ -794,6 +909,7 @@ links.put('/:id', authMiddleware, async (c) => {
 // ========== 删除短链 ==========
 links.delete('/:id', authMiddleware, async (c) => {
   const linkId = parseInt(c.req.param('id'));
+  if (!Number.isFinite(linkId)) return jsonResponse({ error: '无效的短链 ID' }, 400);
   const currentUser = c.get('user');
 
   const link = await c.env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(linkId).first<{ id: number; created_by: number; group_id: number | null; short_code: string }>();
@@ -824,17 +940,34 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
   if (!body.links || !Array.isArray(body.links) || body.links.length === 0) {
     return jsonResponse({ error: '没有要导入的短链' }, 400);
   }
+  if (body.links.length > 500) {
+    return jsonResponse({ error: '单次最多导入 500 条短链' }, 400);
+  }
 
-  // 获取默认域名
+  // 获取默认域名与默认跳转类型
   const defaultDomain = await c.env.DB.prepare(
     "SELECT id FROM domains WHERE is_default_short_link = 1 AND type IN ('short_link', 'both') AND status = 'active' LIMIT 1"
   ).first<{ id: number }>();
+  const defaultRedirectType = await getDefaultRedirectType(c.env.DB);
 
   const results: { success: boolean; short_code?: string; error?: string; target_url: string }[] = [];
 
   for (const item of body.links) {
-    if (!isSafeHttpUrl(item.target_url)) {
-      results.push({ success: false, error: 'URL格式错误，仅支持 http:// 或 https://', target_url: item.target_url });
+    if (!item || typeof item !== 'object') {
+      results.push({ success: false, error: '数据格式错误', target_url: '' });
+      continue;
+    }
+    const targetUrl = typeof item?.target_url === 'string' ? item.target_url.trim() : '';
+    if (!targetUrl || !isSafeHttpUrl(targetUrl)) {
+      results.push({ success: false, error: 'URL格式错误，仅支持 http:// 或 https://', target_url: targetUrl });
+      continue;
+    }
+    if (item.name !== undefined && typeof item.name !== 'string') {
+      results.push({ success: false, error: '名称格式不正确', target_url: targetUrl });
+      continue;
+    }
+    if (item.custom_alias !== undefined && typeof item.custom_alias !== 'string') {
+      results.push({ success: false, error: '别名格式不正确', target_url: targetUrl });
       continue;
     }
 
@@ -842,7 +975,7 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
     if (aliasInput) {
       const aliasError = validateAlias(aliasInput);
       if (aliasError) {
-        results.push({ success: false, error: aliasError, target_url: item.target_url });
+        results.push({ success: false, error: aliasError, target_url: targetUrl });
         continue;
       }
     }
@@ -857,7 +990,7 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
       results.push({
         success: false,
         error: aliasInput ? '别名已存在' : '短码生成冲突，请重试',
-        target_url: item.target_url,
+        target_url: targetUrl,
       });
       continue;
     }
@@ -865,15 +998,23 @@ links.post('/batch-import', authMiddleware, requireRole('super_admin'), async (c
     try {
       await c.env.DB.prepare(
         `INSERT INTO short_links (short_code, target_url, name, custom_alias, status, redirect_type, created_by, domain_id)
-         VALUES (?, ?, ?, ?, 'active', 302, ?, ?)`
-      ).bind(shortCode, item.target_url, item.name || '', aliasInput || null, currentUser.user_id, defaultDomain?.id || null).run();
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`
+      ).bind(
+        shortCode,
+        targetUrl,
+        item.name || '',
+        aliasInput || null,
+        defaultRedirectType,
+        currentUser.user_id,
+        defaultDomain?.id || null,
+      ).run();
     } catch {
       // 并发下仍可能撞唯一索引，单条失败不影响整批
-      results.push({ success: false, error: '该别名已被占用', target_url: item.target_url });
+      results.push({ success: false, error: '该别名已被占用', target_url: targetUrl });
       continue;
     }
 
-    results.push({ success: true, short_code: shortCode, target_url: item.target_url });
+    results.push({ success: true, short_code: shortCode, target_url: targetUrl });
   }
 
   await logAudit(c.env.DB, currentUser.user_id, 'batch_import_links', c.req.raw, 'link', undefined, JSON.stringify({ count: body.links.length }));

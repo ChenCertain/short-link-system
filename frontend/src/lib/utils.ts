@@ -22,13 +22,6 @@ export function formatDateTime(ts?: number | null): string {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`
 }
 
-/** 时间戳（秒）→ 北京时间日期 */
-export function formatDate(ts?: number | null): string {
-  if (!ts) return '-'
-  const d = beijingDate(ts)
-  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
-}
-
 /** 日期字符串（YYYY-MM-DD）→ 图表轴展示（MM-DD） */
 export function formatMonthDay(date: string): string {
   return date.length >= 10 ? date.slice(5) : date

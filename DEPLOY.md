@@ -139,6 +139,17 @@ npx wrangler d1 migrations apply short-link-db --remote --config wrangler.build.
 
 填完点 **Deploy**（或 Save）让它生效。Secret 不会被以后每次部署覆盖。
 
+> **可选：调整登录限流阈值**（同一页面添加，类型选 **Text/明文变量**，不填则用默认值）：
+>
+> | 名称 | 默认 | 说明 |
+> |---|---|---|
+> | `RATE_LIMIT_LOGIN_FAIL_MAX` | `10` | 同一 IP 窗口内允许的登录/设置密码/初始化验证失败次数 |
+> | `RATE_LIMIT_LOGIN_FAIL_WINDOW` | `900` | 上述失败计数的窗口（秒） |
+> | `RATE_LIMIT_SEND_IP_MAX` | `20` | 同一 IP 窗口内允许发送验证码的次数 |
+> | `RATE_LIMIT_SEND_IP_WINDOW` | `600` | 上述发送计数的窗口（秒） |
+>
+> 超限的请求返回 429，成功登录会清零失败计数。限流按 IP 计数，不会锁死账户本身。
+
 ---
 
 ## 第 8 步：打开网站，创建管理员

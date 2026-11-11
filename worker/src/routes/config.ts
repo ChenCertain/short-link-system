@@ -9,13 +9,17 @@ const config = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
 
 // 公开配置（不需要登录）
 config.get('/public', async (c) => {
-  const siteName = await c.env.DB.prepare(
-    "SELECT value FROM system_config WHERE key = 'site_name'"
-  ).first<{ value: string }>();
+  const [siteName, defaultRedirectType] = await Promise.all([
+    c.env.DB.prepare("SELECT value FROM system_config WHERE key = 'site_name'").first<{ value: string }>(),
+    c.env.DB.prepare("SELECT value FROM system_config WHERE key = 'default_redirect_type'")
+      .first<{ value: string }>()
+      .catch(() => null),
+  ]);
   // 占位符或空值时不返回 Site Key，前端会自动不渲染人机验证
   const siteKey = (c.env.TURNSTILE_SITE_KEY || '').trim();
   return jsonResponse({
     site_name: siteName?.value || '短链管理系统',
+    default_redirect_type: defaultRedirectType?.value === '301' ? '301' : '302',
     turnstile_site_key: siteKey.startsWith('REPLACE_WITH') ? '' : siteKey,
   });
 });
@@ -38,9 +42,11 @@ config.put('/', requireRole('super_admin'), async (c) => {
   const body = await c.req.json<Record<string, string>>();
   const now = Math.floor(Date.now() / 1000);
 
-  for (const [key, value] of Object.entries(body)) {
+  for (const [key, rawValue] of Object.entries(body)) {
     // 不允许通过此接口修改 initialized 标志
     if (key === 'initialized') continue;
+    if (rawValue === null || rawValue === undefined || typeof rawValue === 'object') continue;
+    const value = String(rawValue);
     await c.env.DB.prepare(
       'INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
     ).bind(key, value, now).run();

@@ -5,7 +5,14 @@
 
 import { Hono } from 'hono';
 import type { Env, JWTPayload } from '../types';
-import { BEIJING_OFFSET, beijingDateKey, beijingDayStart, jsonResponse, parseUserAgent } from '../utils';
+import {
+  BEIJING_OFFSET,
+  beijingDateKey,
+  beijingDayStart,
+  jsonResponse,
+  parseUserAgent,
+  parseIntClamped,
+} from '../utils';
 import { authMiddleware } from '../middleware';
 import {
   expandGroupIdsWithDescendants,
@@ -262,7 +269,7 @@ stats.get('/top-links', async (c) => {
 
   const days = parseDays(c.req.query('days'));
   const start = beijingDayStart() - (days - 1) * 86400;
-  const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '10'), 1), 50);
+  const limit = parseIntClamped(c.req.query('limit'), 10, 1, 50);
 
   const rows = await c.env.DB.prepare(
     `SELECT sl.id, sl.short_code, sl.name, sl.target_url, d.domain as domain_name,
@@ -398,8 +405,12 @@ stats.get('/link/:id', async (c) => {
     .bind(linkId)
     .all();
 
+  // 不把访问密码哈希返回给前端（统计页只需要展示信息）
+  const publicLink: Record<string, unknown> = { ...link };
+  delete publicLink.password;
+
   return jsonResponse({
-    link,
+    link: publicLink,
     trend: fillDays(startDay, days, trendRows.results),
     referers: referers.results,
     countries: countries.results,

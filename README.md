@@ -1,4 +1,4 @@
-﻿# 短链接管理系统
+# 短链接管理系统
 
 [![License: AGPL--3.0--or--later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](./LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
@@ -81,7 +81,7 @@
 │   ├── src/services/    # 邮件发送（SMTP over TCP Sockets）
 │   ├── src/permissions.ts
 │   └── wrangler.toml    # 模板配置（仅含占位符，不含密钥）
-├── migrations/          # D1 数据库迁移（0001 ~ 0010）
+├── migrations/          # D1 数据库迁移（0001 ~ 0011）
 ├── scripts/             # 构建期配置生成脚本（多实例部署）
 └── DEPLOY.md            # 完整部署指南
 ```
@@ -143,6 +143,8 @@ npm run build    # 构建前端 + 打包 Worker（本地自检用）
 | `SMTP_FROM` | 发件人地址，留空时回退为 `SMTP_USER` |
 | `PAGES_DOMAIN` | 本实例访问域名（用于短链地址展示与 DNS 指引） |
 | `WORKER_HOST` | 本 Worker 的 `workers.dev` 域名（留空时自动从请求推断） |
+| `RATE_LIMIT_LOGIN_FAIL_MAX` / `RATE_LIMIT_LOGIN_FAIL_WINDOW` | 可选：同一 IP 在窗口（秒）内允许的登录 / 设置密码 / 初始化验证失败次数，默认 `10` 次 / `900` 秒，超限返回 429 |
+| `RATE_LIMIT_SEND_IP_MAX` / `RATE_LIMIT_SEND_IP_WINDOW` | 可选：同一 IP 在窗口（秒）内允许发送验证码的次数，默认 `20` 次 / `600` 秒，超限返回 429 |
 
 > 本地开发可把敏感变量写入 `worker/.dev.vars`，该文件已被 `.gitignore` 忽略。
 
@@ -155,6 +157,7 @@ npm run build    # 构建前端 + 打包 Worker（本地自检用）
 - 本仓库只包含代码，**不含任何数据库、日志、邮箱或密钥**；`worker/.dev.vars`、`worker/wrangler.build.toml`、`.wrangler/`、`frontend/dist/` 均已被 `.gitignore` 忽略，请勿提交。
 - `JWT_SECRET`、`SMTP_PASS`、`TURNSTILE_SECRET_KEY` 通过 Cloudflare Secret 配置，不要写进 `wrangler.toml` 或源码。
 - 未配置 SMTP 时接口不会返回验证码（只有 `localhost` 本地调试会自动填充），线上请先配好邮箱，否则无法登录或初始化管理员。
+- 登录相关接口内置 **IP 维度限流**（计数存于 D1 `rate_limits` 表，迁移 0011）：同一 IP 15 分钟内累计 10 次「登录 / 设置密码 / 初始化」验证失败，或 10 分钟内发送 20 次验证码后，返回 429 并提示剩余等待秒数；成功登录会清零失败计数。阈值可用上表的 `RATE_LIMIT_*` 变量调整。限流按 IP 计数，不会因他人恶意尝试而锁死某个账户。
 - 发现安全问题请通过 Issue 反馈，避免直接公开可复现的利用细节。
 
 ## 参与贡献
