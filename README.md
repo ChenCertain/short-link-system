@@ -31,13 +31,21 @@
 
 ![项目组](docs/screenshots/groups.jpg)
 
-**成员管理** — 组内权限配置
+**成员管理** — 组内身份与权限摘要
 
 ![成员管理](docs/screenshots/members.jpg)
+
+**成员权限配置** — 逐项自定义覆盖默认权限
+
+![成员权限配置](docs/screenshots/members-perm.jpg)
 
 **用户管理** — 全局用户与角色
 
 ![用户管理](docs/screenshots/users.jpg)
+
+**用户详情** — 登录 IP 属地、所在组与操作记录
+
+![用户详情](docs/screenshots/users-detail.jpg)
 
 **短链审核** — 待审列表与审批
 
